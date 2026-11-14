@@ -425,6 +425,28 @@ test('Linter-Konfiguration ist auch als .mjs/.cjs geschützt', () => {
   }
 })
 
+test('das Gate-Skript scripts/gate.sh ist geschützt', () => {
+  // rankscan, resplan, rankscan-website und rankscan-mautic führen ihr
+  // Board-Gate als scripts/gate.sh im Repo (14.11.2026). Ein Branch könnte
+  // sonst das Skript abschwächen, das ihn gleich danach prüft.
+  const findings = analyseDiff([
+    { path: 'scripts/gate.sh', added: [{ line: 1, text: 'exit 0' }], deleted: false },
+  ])
+  assert.deepEqual(
+    findings.map((f) => f.rule),
+    ['protected.changed'],
+  )
+})
+
+test('ein anderes gate.sh ausserhalb von scripts/ ist kein Gate-Skript', () => {
+  for (const datei of ['src/scripts/gate.sh', 'scripts/gate.sh.bak', 'scripts/test-gate.sh']) {
+    const findings = analyseDiff([
+      { path: datei, added: [{ line: 1, text: 'exit 0' }], deleted: false },
+    ])
+    assert.deepEqual(findings, [], `${datei} darf nicht als Gate-Skript gelten`)
+  }
+})
+
 test('eine gleichnamige Quelldatei ist keine Konfiguration', () => {
   // Die Erweiterung um [cm]? darf nicht dazu führen, dass alles mit ähnlichem
   // Namen als Konfiguration gilt.
