@@ -196,10 +196,11 @@ async function runGateCommand(options) {
     await import('../lib/gate.mjs')
   const { GITLEAKS_VERSION, ensureGitleaks, gitleaksCacheDir } = await import('../lib/gitleaks.mjs')
   const root = repoRoot()
-  const base = resolveBase(options.base, process.env)
-  process.stdout.write(c.dim(`Basis: ${base}\n`))
+  const name = resolveBase(options.base, process.env)
+  process.stdout.write(c.dim(`Basis: ${name}\n`))
+  let base
   try {
-    assertGateReady(root, base)
+    base = assertGateReady(root, name)
   } catch (err) {
     if (err instanceof GateError) {
       process.stderr.write(c.red(`${err.message}\n`))
@@ -209,10 +210,16 @@ async function runGateCommand(options) {
   }
 
   const stageName = options.build ? 'full' : 'task'
+  // Wirft die Stufe, zählt sie als «keine Aussage» (2). Die übrigen Teile laufen trotzdem.
+  let stageCode
+  try {
+    stageCode = await runStage(stageName, { ...options, base })
+  } catch (err) {
+    process.stderr.write(c.red(`quality ${stageName} nicht möglich: ${messageOf(err)}\n`))
+    stageCode = 2
+  }
   /** @type {Array<{ name: string, code: number }>} */
-  const parts = [
-    { name: `quality ${stageName}`, code: await runStage(stageName, { ...options, base }) },
-  ]
+  const parts = [{ name: `quality ${stageName}`, code: stageCode }]
 
   if (options.secretScan) {
     const name = 'Secret-Scan'

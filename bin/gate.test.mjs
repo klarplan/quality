@@ -160,7 +160,7 @@ test('gate --secrets: sauberer Branch → Exit 0, «Gate grün»', () => {
   const { output, code } = quality(dir, ['--base', base, '--secrets'], { XDG_CACHE_HOME: cache })
   assert.equal(code, 0, output)
   assert.match(output, /Gate grün/)
-  assert.match(readFileSync(aufrufe(cache), 'utf8'), new RegExp(`--log-opts=HEAD --not ${base}`))
+  assert.match(readFileSync(aufrufe(cache), 'utf8'), new RegExp(`--log-opts=--no-textconv --no-ext-diff HEAD --not ${base}`))
 })
 
 test('gate --secrets: Secret im Branch → Exit 1, Secret-Scan rot', () => {
@@ -225,4 +225,46 @@ test('gate --build: läuft die Stufe full', () => {
   const { dir, cache, base } = lage()
   const { output } = quality(dir, ['--base', base, '--build'], { XDG_CACHE_HOME: cache })
   assert.match(output, /quality full/)
+})
+
+test('gate --secrets: Basis heisst wie eine Datei → trotzdem rot bei Secret', () => {
+  const { dir, cache } = lage({ inhalt: 'export const a = "SECRET"\n' })
+  // Eine Datei namens main macht `git log HEAD --not main` mehrdeutig. git
+  // bricht ab, gitleaks meldete «0 commits scanned» und Exit 0.
+  git(['checkout', '-q', 'main'], dir)
+  writeFileSync(join(dir, 'main'), 'x\n')
+  git(['add', 'main'], dir)
+  git(['commit', '-qm', 'Datei main'], dir)
+  git(['checkout', '-q', 'task'], dir)
+  git(['merge', '-q', '--no-edit', 'main'], dir)
+  const { output, code } = quality(dir, ['--base', 'main', '--secrets'], {
+    XDG_CACHE_HOME: cache,
+  })
+  assert.equal(code, 1, output)
+  assert.match(output, /- Secret-Scan/)
+})
+
+test('gate --secrets: wirft die Stufe, läuft der Secret-Scan trotzdem', () => {
+  const { dir, cache } = lage()
+  // Ein Commit ohne gemeinsame Vorgeschichte: die Stufe findet keine Merge-Base.
+  git(['checkout', '-q', '--orphan', 'fremd'], dir)
+  git(['commit', '-qm', 'fremd'], dir)
+  const fremd = git(['rev-parse', 'HEAD'], dir)
+  git(['checkout', '-q', '-f', 'task'], dir)
+  const { output, code } = quality(dir, ['--base', fremd, '--secrets'], { XDG_CACHE_HOME: cache })
+  assert.equal(code, 2, output)
+  assert.ok(existsSync(aufrufe(cache)))
+  assert.match(output, /- quality task/)
+})
+
+test('gate --secrets: textconv in der Git-Konfiguration versteckt kein Secret', () => {
+  const { dir, cache, base } = lage()
+  // textconv `true` gibt nichts aus: ohne --no-textconv sähe gitleaks einen leeren Diff.
+  git(['config', 'diff.leer.textconv', 'true'], dir)
+  writeFileSync(join(dir, '.gitattributes'), '*.ts diff=leer\n')
+  writeFileSync(join(dir, 'a.ts'), 'export const a = "SECRET"\n')
+  git(['add', '-A'], dir)
+  git(['commit', '-qm', 'Secret hinter textconv'], dir)
+  const { output, code } = quality(dir, ['--base', base, '--secrets'], { XDG_CACHE_HOME: cache })
+  assert.equal(code, 1, output)
 })
