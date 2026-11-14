@@ -18,7 +18,7 @@ import {
 } from '../guards/tamper-git.mjs'
 
 /** @import { Options } from '../lib/args.mjs' */
-/** @import { Stack } from '../lib/types.mjs' */
+/** @import { Stack, Step, Verb } from '../lib/types.mjs' */
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const PKG_ROOT = resolve(HERE, '..')
@@ -371,6 +371,20 @@ async function main() {
 
     const ownedFiles = owned ? filesForComponent(enriched, owned, config.root) : null
 
+    /**
+     * Ein Schritt aus `required` darf nicht fehlen. pflicht markiert nur, was
+     * diese Stufe ausführt: --only und die Datei-Läufe werten required also
+     * nur für ihre eigenen Schritte. Der weiche fmt-Lauf über die ganze Fläche
+     * ist ein Hinweis und nie Pflicht.
+     *
+     * @param {Step | null | undefined} step
+     * @param {Verb} verb
+     */
+    const pflicht = (step, verb) => {
+      if (step && component.required.includes(verb)) step.required = true
+      return step
+    }
+
     for (const verb of plan.verbs) {
       /*
        * Der fmt-Schritt zerfällt mit --base in zwei Läufe.
@@ -389,7 +403,7 @@ async function main() {
       if (verb === 'fmt' && ownedFiles) {
         const own = filesForVerb(enriched.kind, 'fmt', ownedFiles)
         if (own.length > 0) {
-          const hart = stack.fmt?.({ ...ctx, files: own })
+          const hart = pflicht(stack.fmt?.({ ...ctx, files: own }), 'fmt')
           if (hart) steps.push(hart)
         }
         const bestand = stack.fmt?.({ ...ctx, files: null })
@@ -407,7 +421,7 @@ async function main() {
       // Gilt für mypy genauso wie für tsc — nur PHPStan kommt mit einer
       // Einzeldatei zurecht, weil es den Rest über den Autoloader nachlädt.
       if (verb === 'types' && (enriched.kind === 'js' || enriched.kind === 'py')) {
-        const step = stack[verb]?.({ ...ctx, files: null })
+        const step = pflicht(stack[verb]?.({ ...ctx, files: null }), verb)
         if (step) steps.push(step)
         continue
       }
@@ -415,7 +429,7 @@ async function main() {
       // Kein Werkzeug ohne Arbeit aufrufen: die meisten deuten eine leere
       // Dateiliste als Fehler, nicht als "nichts zu tun".
       if (verbFiles && verbFiles.length === 0) continue
-      const step = stack[verb]?.({ ...ctx, files: verbFiles })
+      const step = pflicht(stack[verb]?.({ ...ctx, files: verbFiles }), verb)
       if (step) steps.push(step)
     }
   }

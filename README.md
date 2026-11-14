@@ -62,11 +62,37 @@ components:
     stack: laravel
     php: '8.3'
     phpstan_level: 5 # steigt per Ratchet; NICHT vom Profil abgeleitet
+    required: [fmt, types, test]
   - path: ads-cockpit/frontend
     stack: react-ts
+    required: [fmt, lint, types, test, build]
 ```
 
 Bekannte Stacks: `laravel`, `php`, `react-ts`, `next-ts`, `node-ts`, `python`.
+
+### Pflichtschritte: `required`
+
+`required` nennt die Schritte, die eine Komponente zusagt. Ohne das Feld kann
+eine Prüfung unbemerkt fehlen: ein Schritt ohne Werkzeug, Konfiguration oder
+Tests endet sonst als «übersprungen» in einer grauen Zeile.
+
+- Überspringt das Gate einen Schritt aus `required`, ist es rot. Die Zeile
+  nennt den Grund des Skips, etwa «kein lint-Skript, oxlint oder eslint
+  gefunden».
+- Läuft in einem Gate kein einziger Schritt, ist es rot, auch ohne `required`.
+  «0 Prüfungen bestanden» heisst: jedes Werkzeug fehlt.
+- `--only`, `fix` und `fast` werten `required` nur für die Schritte, die sie
+  ausführen. Ein Datei-Lauf ohne passende Datei bleibt grün. Das gilt auch für
+  Dateien, die das Werkzeug ignoriert.
+- Erlaubt sind nur Schritte, die der Stack kennt. `laravel` und `php` kennen
+  `fmt`, `types` und `test`. `python` kennt zusätzlich `lint`. Die JS-Stacks
+  kennen alle fünf: `fmt`, `lint`, `types`, `test` und `build`.
+- Fehlt `node_modules` oder `vendor` ganz, ist der Schritt schon heute rot.
+  `required` meldet diesen Fall nicht ein zweites Mal.
+
+`quality audit` schlägt `required` aus den Schritten vor, die heute laufen.
+`quality init` schreibt es. Eine fehlende Prüfung wird dabei nicht Pflicht: das
+Gate wäre sonst sofort rot. Sie bleibt eine Lücke, die jemand bewusst schliesst.
 
 Optional kommt ein `configs:`-Block dazu. Er beantwortet genau eine Frage: für
 welche Konfiguration ist es Absicht, dass das Projekt eine eigene führt statt

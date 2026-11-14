@@ -13,14 +13,19 @@ baseline: false
 # configs:
 #   prettier: own
 
+# required: Schritte, die die Komponente zusagt. Fehlt einer davon, etwa weil
+# das Werkzeug fehlt, ist das Gate rot. Ohne das Feld bleibt ein Skip grün.
+# Erlaubt sind nur Schritte, die der Stack kennt (siehe README).
 components:
   # Einzelne Anwendung in der Repo-Wurzel:
-  - { path: '.', stack: laravel, php: '8.3', phpstan_level: 5 }
+  - { path: '.', stack: laravel, php: '8.3', phpstan_level: 5, required: [fmt, types, test] }
 
   # Monorepo mit mehreren Anwendungen:
   # - path: backend
   #   stack: laravel
   #   php: "8.3"
   #   phpstan_level: 5
+  #   required: [fmt, types, test]
   # - path: frontend
   #   stack: react-ts
+  #   required: [fmt, lint, types, test, build]
