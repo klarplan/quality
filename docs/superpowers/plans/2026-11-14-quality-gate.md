@@ -156,7 +156,7 @@ test('secretScanSteps: .gitleaks.toml nur, wenn vorhanden', ...)     // mit Date
 **Files:**
 
 - Modify: `bin/quality.mjs` (Stufenlauf aus `main` in `runStage(stageName, options)` ziehen; `runGateCommand`; `usage()`)
-- Modify: `README.md` (Abschnitt «Board-Gate»: Aufruf, Basis-Regel, `--secrets`, Cache, Beispiel-Registerzeilen aus der Spec)
+- Modify: `README.md` (Abschnitt «Board-Gate»: Aufruf, Basis-Regel, `--secrets`, Cache. Dazu eine Vorlage je Stack — PHP, Node, Python, ddev — mit Registerzeile und kurzem `scripts/gate.sh` nach dem Muster «Installation + Extras + `quality gate`». Freigabe René, 14.11.2026)
 - Create: `bin/gate.test.mjs`
 
 **Interfaces:**
