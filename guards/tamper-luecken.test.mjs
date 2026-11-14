@@ -264,7 +264,7 @@ test('pyproject.toml: ein Abschnittskopf mit Anführungszeichen beginnt einen ne
   assert.deepEqual(tamper.manifestGateChanges('pyproject.toml', before, after), [])
 })
 
-test('analyseDiff: markierte Gate-Felder eines Manifests melden protected.changed', () => {
+test('analyseDiff: ein geändertes Skript meldet gate.script-changed', () => {
   const file = {
     path: 'package.json',
     deleted: false,
@@ -275,9 +275,96 @@ test('analyseDiff: markierte Gate-Felder eines Manifests melden protected.change
   const findings = analyseDiff([file])
   assert.deepEqual(
     findings.map((f) => f.rule),
-    ['protected.changed'],
+    ['gate.script-changed'],
   )
   assert.match(findings[0]?.label ?? '', /scripts\.lint/)
+})
+
+test('analyseDiff: geänderte Werkzeug-Konfiguration im Manifest meldet protected.changed', () => {
+  const file = {
+    path: 'package.json',
+    deleted: false,
+    added: [{ line: 5, text: '    "no-unused-vars": "off"' }],
+    removed: [],
+    gateFields: ['eslintConfig'],
+  }
+  assert.deepEqual(
+    analyseDiff([file]).map((f) => f.rule),
+    ['protected.changed'],
+  )
+})
+
+test('analyseDiff: Skript und Konfiguration zugleich melden beide Regeln', () => {
+  const file = {
+    path: 'package.json',
+    deleted: false,
+    added: [],
+    removed: [],
+    gateFields: ['scripts.test', 'jest'],
+  }
+  assert.deepEqual(
+    analyseDiff([file])
+      .map((f) => f.rule)
+      .sort(),
+    ['gate.script-changed', 'protected.changed'],
+  )
+})
+
+test('ein abgeschwächtes Skript blockiert auch lokal, Werkzeug-Konfiguration nicht', () => {
+  assert.equal(tamper.SOFT_LOCALLY.has('gate.script-changed'), false)
+  assert.equal(tamper.SOFT_LOCALLY.has('protected.changed'), true)
+})
+
+for (const key of ['jest', 'mocha', 'c8', 'nyc']) {
+  test(`package.json: geänderte ${key}-Konfiguration im Manifest meldet`, () => {
+    const after = { ...PKG, [key]: { exclude: ['**'] } }
+    assert.deepEqual(tamper.manifestGateChanges('package.json', json(PKG), json(after)), [key])
+  })
+}
+
+for (const name of ['pretest', 'prelint', 'prebuild']) {
+  test(`package.json: ein neues ${name}-Skript meldet`, () => {
+    const before = { ...PKG, scripts: { ...PKG.scripts, build: 'vite build' } }
+    const after = { ...before, scripts: { ...before.scripts, [name]: 'rm -rf tests' } }
+    assert.deepEqual(tamper.manifestGateChanges('package.json', json(before), json(after)), [
+      `scripts.${name}`,
+    ])
+  })
+}
+
+test('package.json: ein neues Skript mit pre im Namen, aber ohne Ziel, meldet nicht', () => {
+  const after = { ...PKG, scripts: { ...PKG.scripts, preview: 'vite preview', prepare: 'husky' } }
+  assert.deepEqual(tamper.manifestGateChanges('package.json', json(PKG), json(after)), [])
+})
+
+test('composer.json: ein neues pre-Skript meldet nicht', () => {
+  // composer kennt pre- und post-Skripte nur für eigene Kommandos, nicht für
+  // selbst benannte Skripte.
+  const after = { ...COMPOSER, scripts: { ...COMPOSER.scripts, pretest: 'true' } }
+  assert.deepEqual(tamper.manifestGateChanges('composer.json', json(COMPOSER), json(after)), [])
+})
+
+test('echter Stand: ein uncommittet abgeschwächtes lint-Skript blockiert lokal', () => {
+  const { root } = twoCommits({ 'package.json': json(PKG) }, { 'README.md': 'x\n' })
+  try {
+    writeFileSync(
+      join(root, 'package.json'),
+      json({ ...PKG, scripts: { ...PKG.scripts, lint: 'true' } }),
+    )
+    assert.equal(runTamper({ root, quiet: true }), 1)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('echter Stand: eine uncommittete ruff-Änderung in pyproject.toml bleibt lokal ein Hinweis', () => {
+  const { root } = twoCommits({ 'pyproject.toml': PYPROJECT }, { 'README.md': 'x\n' })
+  try {
+    writeFileSync(join(root, 'pyproject.toml'), PYPROJECT.replace('"E", "F", "I"', '"E"'))
+    assert.equal(runTamper({ root, quiet: true }), 0)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
 })
 
 test('echter Diff: package.json mit abgeschwächtem lint-Skript macht den Check rot', () => {

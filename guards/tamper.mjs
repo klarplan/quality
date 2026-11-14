@@ -320,8 +320,16 @@ export function composerLockOnlyRehashes({ lockBefore, lockAfter, manifestBefore
  */
 export const GATE_MANIFEST = /(^|\/)(package\.json|composer\.json|pyproject\.toml)$/
 
-/** Felder in package.json, die Formatierer und Linter als Konfiguration lesen. */
-const PACKAGE_CONFIG_KEYS = ['prettier', 'eslintConfig', 'eslintIgnore']
+/** Felder in package.json, die Formatierer, Linter und Test-Runner als Konfiguration lesen. */
+const PACKAGE_CONFIG_KEYS = [
+  'prettier',
+  'eslintConfig',
+  'eslintIgnore',
+  'jest',
+  'mocha',
+  'c8',
+  'nyc',
+]
 
 /** Abschnitte in pyproject.toml, die ruff, mypy und pytest lesen. */
 const PYPROJECT_GATE_SECTION = /^tool\.(ruff|mypy|pytest)(\.|$)/
@@ -365,8 +373,9 @@ function tomlSections(text) {
  * - package.json und composer.json: ein bestehendes Skript, das sich ändert
  *   oder verschwindet. Das Gate ruft `lint`, `test` und `build` auf, und diese
  *   rufen oft weitere Skripte. Ein NEUES Skript ist kein Fund: es schwächt
- *   keinen bestehenden Aufruf. Bei package.json dazu die Konfiguration von
- *   prettier und eslint im Manifest.
+ *   keinen bestehenden Aufruf. Die Ausnahme ist bei package.json ein neues
+ *   `pre<name>` zu einem vorhandenen Skript. Bei package.json dazu die
+ *   Konfiguration von prettier, eslint und den Test-Runnern im Manifest.
  * - pyproject.toml: die Abschnitte [tool.ruff…], [tool.mypy…], [tool.pytest…].
  *
  * Abhängigkeiten und die Version zählen nicht. Dafür gibt es die Lockfile-Regel.
@@ -418,6 +427,12 @@ export function manifestGateChanges(path, before, after) {
     if (!isDeepStrictEqual(scriptsA[name], scriptsB[name])) changed.push(`scripts.${name}`)
   }
   if (path.endsWith('package.json')) {
+    // npm führt `pre<name>` vor `<name>` aus. Ein neues pretest läuft also im
+    // Gate mit, ohne dass sich das test-Skript ändert.
+    for (const name of Object.keys(scriptsB)) {
+      const target = name.startsWith('pre') ? name.slice(3) : ''
+      if (!(name in scriptsA) && target && target in scriptsB) changed.push(`scripts.${name}`)
+    }
     for (const key of PACKAGE_CONFIG_KEYS) {
       if (!isDeepStrictEqual(a[key], b[key])) changed.push(key)
     }
@@ -890,12 +905,25 @@ export function analyseDiff(files, { botAuthor = false, ignorePaths = [] } = {})
       continue
     }
 
-    if (file.gateFields?.length) {
+    // Ein Skript ändern ist Agentenverhalten und blockiert auch lokal. Die
+    // Werkzeug-Konfiguration im Manifest legt beim Onboarding ein Mensch an und
+    // bleibt lokal ein Hinweis, wie jede andere Gate-Konfiguration.
+    const scripts = (file.gateFields ?? []).filter((field) => field.startsWith('scripts.'))
+    const config = (file.gateFields ?? []).filter((field) => !field.startsWith('scripts.'))
+    if (scripts.length > 0) {
+      findings.push({
+        rule: 'gate.script-changed',
+        label: `Skript geändert (${scripts.join(', ')})`,
+        path: file.path,
+        detail: 'Das Gate ruft lint, test und build auf, und diese rufen oft weitere Skripte.',
+      })
+    }
+    if (config.length > 0) {
       findings.push({
         rule: 'protected.changed',
-        label: `Gate-Felder geändert (${file.gateFields.join(', ')})`,
+        label: `Werkzeug-Konfiguration geändert (${config.join(', ')})`,
         path: file.path,
-        detail: 'Das Gate ruft diese Skripte auf oder liest diese Konfiguration.',
+        detail: 'Linter, Typprüfung oder Test-Runner lesen diese Felder.',
       })
     }
 

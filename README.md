@@ -352,10 +352,13 @@ Seit dem Audit vom 14.11.2026 deckt der Check weitere Stellen ab:
   meldet nur diese Felder:
   - `package.json` und `composer.json`: ein bestehendes Skript, das sich ändert
     oder verschwindet. Das Gate ruft `lint`, `test` und `build` auf. Ein neues
-    Skript zählt nicht.
-  - `package.json`: dazu `prettier`, `eslintConfig` und `eslintIgnore`.
+    Skript zählt nicht, ausser es heisst `pre<name>` zu einem vorhandenen
+    Skript: npm führt es vor `<name>` aus. Die Regel heisst
+    `gate.script-changed` und blockiert auch lokal.
+  - `package.json`: dazu `prettier`, `eslintConfig`, `eslintIgnore`, `jest`,
+    `mocha`, `c8` und `nyc` als `protected.changed`.
   - `pyproject.toml`: die Abschnitte `[tool.ruff…]`, `[tool.mypy…]` und
-    `[tool.pytest…]`.
+    `[tool.pytest…]` als `protected.changed`.
 
   Eine neue Abhängigkeit oder ein Versionssprung meldet weiterhin nur die
   Lockfile-Regel.
@@ -375,9 +378,15 @@ Seit dem Audit vom 14.11.2026 deckt der Check weitere Stellen ab:
   wie `phpstan.neon.bak` meldet `protected.changed`.
 - **Suppressions** auch in `.mts`, `.cts` und `.svelte`.
 
-Die Grenze offen benannt: Ein Test, dessen Assertion jemand gegen
-`expect(true).toBe(true)` tauscht, bleibt unbemerkt. Das fände nur eine
-Coverage- oder Mutationsmessung.
+Drei Grenzen, offen benannt:
+
+- Ein Test, dessen Assertion jemand gegen `expect(true).toBe(true)` tauscht,
+  bleibt unbemerkt. Das fände nur eine Coverage- oder Mutationsmessung.
+- `vite.config.*` ist nicht geschützt, auch wenn dort `test.exclude` stehen
+  kann. Die Datei steuert vor allem den Build und ändert sich oft legitim.
+- `pyproject.toml` liest der Check ohne TOML-Parser. Gepunktete Schlüssel wie
+  `ruff.lint.ignore` unter `[tool]` erkennt er nicht. `setup.cfg`, `tox.ini` und
+  `.flake8` stehen in keiner Liste.
 
 Seit v0.2.0 zusätzlich zwei Dinge, die keine hinzugefügte Codezeile hinterlassen:
 
@@ -630,7 +639,9 @@ beheben; `src/a.ts:3:9: 'x' is declared but never used` schon.
 ### Lokal weicher als in CI
 
 Zwei Tamper-Regeln — geänderte Gate-Konfiguration und geänderte Lockfiles —
-melden lokal nur, ohne zu blockieren. Sie beschreiben Arbeit, die vom Menschen
+melden lokal nur, ohne zu blockieren. Ein geändertes Skript in `package.json`
+oder `composer.json` gehört nicht dazu: `gate.script-changed` blockiert auch
+lokal. Sie beschreiben Arbeit, die vom Menschen
 kommt, und lokal gibt es noch keinen Commit, in dem eine Ausnahme stehen
 könnte: ein Projekt käme sonst nicht einmal durch sein eigenes Onboarding, weil
 das Anlegen der `quality.yml` das Gate schliesst. In CI zählen beide Regeln

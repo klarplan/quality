@@ -164,6 +164,24 @@ function showAt(root, rev, path) {
 }
 
 /**
+ * Liest eine Datei im Stand `rev`. Ohne `rev` gilt das Arbeitsverzeichnis.
+ * `null`, wenn es die Datei dort nicht gibt.
+ *
+ * @param {string} root
+ * @param {string | null} rev
+ * @param {string} path
+ * @returns {string | null}
+ */
+function readAt(root, rev, path) {
+  if (rev) return showAt(root, rev, path)
+  try {
+    return readFileSync(join(root, path), 'utf8')
+  } catch {
+    return null
+  }
+}
+
+/**
  * Markiert jedes Lockfile, das nur einen Versionssprung des eigenen Pakets
  * abbildet. Dafür liest sie beide Fassungen und übergibt sie dem JSON-Vergleich.
  * Bei composer.lock liest sie zusätzlich beide Fassungen des composer.json
@@ -187,16 +205,10 @@ function markOwnVersionBumps(files, root, before, after) {
     if (file.deleted || (!npm && !composer)) return file
 
     /** @param {string} path */
-    const versions = (path) => {
-      if (after) return { before: showAt(root, before, path), after: showAt(root, after, path) }
-      let current
-      try {
-        current = readFileSync(join(root, path), 'utf8')
-      } catch {
-        current = null
-      }
-      return { before: showAt(root, before, path), after: current }
-    }
+    const versions = (path) => ({
+      before: showAt(root, before, path),
+      after: readAt(root, after, path),
+    })
 
     const lock = versions(file.path)
     let ownVersionOnly
@@ -233,16 +245,7 @@ function markGateFields(files, root, before, after) {
     // Fremdcode bewertet analyseDiff nie. Zwei git-Aufrufe je Manifest in
     // vendor/ oder node_modules/ wären Arbeit ohne Ergebnis.
     if (file.deleted || !GATE_MANIFEST.test(file.path) || VENDOR_PATH.test(file.path)) return file
-    let current
-    if (after) {
-      current = showAt(root, after, file.path)
-    } else {
-      try {
-        current = readFileSync(join(root, file.path), 'utf8')
-      } catch {
-        current = null
-      }
-    }
+    const current = readAt(root, after, file.path)
     const previous = showAt(root, before, file.renamedFrom ?? file.path)
     const gateFields = manifestGateChanges(file.path, previous, current)
     return gateFields.length > 0 ? { ...file, gateFields } : file
