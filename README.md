@@ -330,7 +330,11 @@ Er meldet neu hinzugefügte Suppressions (`@ts-ignore`, `@phpstan-ignore`,
 `eslint-disable`, `# type: ignore`, `# noqa` …), stillgelegte oder auf `.only`
 verengte Tests — bei Python `@pytest.mark.skip` und `@pytest.mark.xfail` —, gelöschte
 Testdateien, Änderungen an Baselines, Gate- und CI-Konfiguration sowie
-Lockfile-Änderungen. Test-Muster werden nur in Testdateien gesucht — eine
+Lockfile-Änderungen. Zur Gate-Konfiguration zählt seit 14.11.2026 auch
+`scripts/gate.sh` in der Repo-Wurzel: das Board ruft das Skript vor dem Push
+auf (rankscan, resplan, rankscan-website, rankscan-mautic). Ein Branch darf das
+Skript nicht abschwächen, das ihn danach prüft. Der PreToolUse-Hook sperrt die
+Datei deshalb wie die übrige Gate-Konfiguration. Test-Muster werden nur in Testdateien gesucht — eine
 Funktion namens `skip()` im Produktivcode ist gewöhnlicher Code.
 
 Seit v0.2.0 zusätzlich zwei Dinge, die keine hinzugefügte Codezeile hinterlassen:

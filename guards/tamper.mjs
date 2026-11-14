@@ -147,6 +147,10 @@ export const PROTECTED_PATHS = [
   { pattern: /(^|\/)eslint\.config\.[cm]?[jt]s$/, label: 'ESLint-Konfiguration' },
   { pattern: /(^|\/)\.oxlintrc\.json$/, label: 'oxlint-Konfiguration' },
   { pattern: /(^|\/)\.claude\/settings\.json$/, label: 'Claude-Hook-Konfiguration' },
+  // Das Board-Gate (`gate = "bash scripts/gate.sh"` in ~/.cc/projects.toml)
+  // läuft vor dem Push. Ein Branch darf das Skript nicht abschwächen, das ihn
+  // gleich danach prüft. Nur die Repo-Wurzel: dort ruft das Board es auf.
+  { pattern: /^scripts\/gate\.sh$/, label: 'Gate-Skript' },
 ]
 
 const LOCKFILES = /(^|\/)(composer\.lock|package-lock\.json|pnpm-lock\.yaml|yarn\.lock)$/
