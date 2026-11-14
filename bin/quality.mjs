@@ -279,7 +279,10 @@ async function main() {
       if (options.stage === 'audit') return await runAuditCommand(options)
       if (options.stage === 'prune') return await runPruneCommand(options)
       if (options.stage === 'deploy-check') return await runDeployCheckCommand(options)
-      return await runInitCommand(options)
+      if (options.stage === 'init') return await runInitCommand(options)
+      // Kein Rückfall auf init: ein neues Kommando ohne Zweig hier schriebe sonst Dateien.
+      process.stderr.write(c.red(`Kommando "${options.stage}" ist noch nicht verdrahtet.\n`))
+      return 2
     } catch (err) {
       process.stderr.write(c.red(`${messageOf(err)}\n`))
       return 2

@@ -264,3 +264,11 @@ test('die Zusammenfassung kommt auch beim langsamen Leser an', () => {
     rmSync(dir, { recursive: true, force: true })
   }
 })
+
+test('gate startet nie init, auch bevor es umgesetzt ist', () => {
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), 'quality-gate-init-')))
+  git(['init', '-q', '-b', 'main'], dir)
+  const { output } = quality(dir, ['gate'])
+  assert.doesNotMatch(output, /init misst selbst/)
+  rmSync(dir, { recursive: true, force: true })
+})
