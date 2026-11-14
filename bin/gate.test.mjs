@@ -194,11 +194,15 @@ test('gate --secrets: Secret nur in der Konfliktlösung des Merge-Commits → Ex
   assert.match(readFileSync(aufrufe(cache), 'utf8'), /^stdin /m)
 })
 
-test('gate --secrets: Branch ohne neue Commits → Exit 0', () => {
+test('gate --secrets: Branch ohne neue Commits → Secret-Scan grün', () => {
   const { dir, cache } = lage()
   const head = git(['rev-parse', 'HEAD'], dir)
-  const { output, code } = quality(dir, ['--base', head, '--secrets'], { XDG_CACHE_HOME: cache })
-  assert.equal(code, 0, output)
+  const { output } = quality(dir, ['--base', head, '--secrets'], { XDG_CACHE_HOME: cache })
+  // Nur der Secret-Scan zählt hier. Die Stufe hat im Fixture ohne eigene
+  // Dateien keine harte Prüfung, und «0 Prüfungen» ist seit 0.2.32 rot.
+  assert.ok(existsSync(aufrufe(cache)), output)
+  assert.match(output, /✓ gitleaks: Commits/)
+  assert.doesNotMatch(output, /- Secret-Scan/)
 })
 
 test('gate --secrets: rote Stufe, Secret-Scan läuft trotzdem', () => {
