@@ -42,6 +42,9 @@ import { isDeepStrictEqual } from 'node:util'
  * @property {RemovedLine[] | undefined} [removed]
  * @property {boolean} deleted
  * @property {boolean | undefined} [ownVersionOnly]
+ * @property {string | undefined} [renamedFrom] alter Pfad bei einer Umbenennung
+ * @property {string[] | undefined} [gateFields] geänderte Gate-Felder eines
+ *   Manifests, gesetzt von tamper-git.mjs über `manifestGateChanges`
  */
 
 /**
@@ -117,12 +120,21 @@ export const isTestFile = (/** @type {string} */ path) =>
   TEST_FILE.test(path) || TEST_NAME.test(path)
 
 /** Quellcode, in dem Suppressions gesucht werden — nicht in Sperr-/Buildartefakten. */
-export const SOURCE_FILE = /\.(php|[jt]sx?|mjs|cjs|vue|py)$/i
+export const SOURCE_FILE = /\.(php|[cm]?[jt]sx?|vue|svelte|py)$/i
 
 /**
  * Dateien, die das Gate selbst definieren. Dieselbe Liste dient dem
  * PreToolUse-Hook als Blockliste — es soll nicht zwei Wahrheiten darüber
  * geben, was geschützt ist.
+ *
+ * `reportOnly` nimmt einen Eintrag aus der Blockliste des Hooks. Der
+ * Tamper-Check meldet die Änderung weiterhin. Das gilt für tsconfig und die
+ * Konfiguration der Test-Runner: ein Agent ändert sie regelmässig legitim,
+ * etwa für einen neuen Pfad-Alias oder eine Setup-Datei. Ein Hook, der das
+ * sperrt, hält die Arbeit auf. Gesperrt bleiben reine Linter-, Typchecker-
+ * und Formatter-Konfigurationen.
+ *
+ * @type {{ pattern: RegExp, label: string, shrinkOnly?: boolean, botMayChange?: boolean, reportOnly?: boolean }[]}
  */
 export const PROTECTED_PATHS = [
   // Der CI-Workflow steht zuerst: eine Datei wie .github/workflows/quality.yml
@@ -135,7 +147,8 @@ export const PROTECTED_PATHS = [
   { pattern: /(^|\/)\.?gitleaks[-.]baseline\.json$/, label: 'gitleaks-Baseline', shrinkOnly: true },
   { pattern: /(^|\/)eslint-suppressions\.json$/, label: 'ESLint-Suppressions', shrinkOnly: true },
   { pattern: /^quality\.ya?ml$/, label: 'Quality-Konfiguration' },
-  { pattern: /(^|\/)phpstan\.neon(\.dist)?$/, label: 'PHPStan-Konfiguration' },
+  // phpstan.dist.neon liest der Stack genauso wie phpstan.neon(.dist).
+  { pattern: /(^|\/)phpstan(\.dist)?\.neon(\.dist)?$/, label: 'PHPStan-Konfiguration' },
   { pattern: /(^|\/)pint\.json$/, label: 'Pint-Konfiguration' },
   { pattern: /(^|\/)\.prettierrc/, label: 'Prettier-Konfiguration' },
   // [cm]? deckt .mjs/.cjs/.mts/.cts mit ab. Ohne das war die Linter- und
@@ -145,7 +158,27 @@ export const PROTECTED_PATHS = [
   // 16.08.2026 in rankscan/website, wo beide Dateien .mjs heissen.
   { pattern: /(^|\/)prettier\.config\.[cm]?[jt]s$/, label: 'Prettier-Konfiguration' },
   { pattern: /(^|\/)eslint\.config\.[cm]?[jt]s$/, label: 'ESLint-Konfiguration' },
-  { pattern: /(^|\/)\.oxlintrc\.json$/, label: 'oxlint-Konfiguration' },
+  // Die alte eslint-Konfiguration: .eslintrc ohne Endung und mit jeder Endung.
+  { pattern: /(^|\/)\.eslintrc(\.(c?js|mjs|json|ya?ml))?$/, label: 'ESLint-Konfiguration' },
+  { pattern: /(^|\/)\.oxlintrc\.jsonc?$/, label: 'oxlint-Konfiguration' },
+  { pattern: /(^|\/)\.?ruff\.toml$/, label: 'ruff-Konfiguration' },
+  { pattern: /(^|\/)\.?mypy\.ini$/, label: 'mypy-Konfiguration' },
+  {
+    pattern: /(^|\/)tsconfig(\.[\w-]+)?\.json$/,
+    label: 'TypeScript-Konfiguration',
+    reportOnly: true,
+  },
+  {
+    pattern: /(^|\/)vitest\.config\.[cm]?[jt]s$/,
+    label: 'vitest-Konfiguration',
+    reportOnly: true,
+  },
+  {
+    pattern: /(^|\/)phpunit(\.dist)?\.xml(\.dist)?$/,
+    label: 'PHPUnit-Konfiguration',
+    reportOnly: true,
+  },
+  { pattern: /(^|\/)pytest\.ini$/, label: 'pytest-Konfiguration', reportOnly: true },
   { pattern: /(^|\/)\.claude\/settings\.json$/, label: 'Claude-Hook-Konfiguration' },
   // Das Board-Gate (`gate = "bash scripts/gate.sh"` in ~/.cc/projects.toml)
   // läuft vor dem Push. Ein Branch darf das Skript nicht abschwächen, das ihn
@@ -265,6 +298,114 @@ export function composerLockOnlyRehashes({ lockBefore, lockAfter, manifestBefore
 }
 
 /**
+ * Manifeste, die neben Abhängigkeiten auch das Gate steuern. Als ganze Datei
+ * lassen sie sich nicht schützen: jede neue Abhängigkeit wäre ein Fund.
+ * Geprüft werden deshalb nur die Felder, die das Gate liest.
+ */
+export const GATE_MANIFEST = /(^|\/)(package\.json|composer\.json|pyproject\.toml)$/
+
+/** Felder in package.json, die Formatierer und Linter als Konfiguration lesen. */
+const PACKAGE_CONFIG_KEYS = ['prettier', 'eslintConfig', 'eslintIgnore']
+
+/** Abschnitte in pyproject.toml, die ruff, mypy und pytest lesen. */
+const PYPROJECT_GATE_SECTION = /^tool\.(ruff|mypy|pytest)(\.|$)/
+
+/**
+ * Die Abschnitte einer TOML-Datei als Text je Abschnittsname.
+ *
+ * Kein TOML-Parser: verglichen wird nur, ob sich der Text eines Abschnitts
+ * ändert. Leerzeilen und Kommentarzeilen zählen nicht. Mehrere Abschnitte mit
+ * demselben Namen ([[tool.mypy.overrides]]) hängen aneinander.
+ *
+ * @param {string} text
+ * @returns {Map<string, string>}
+ */
+function tomlSections(text) {
+  /** @type {Map<string, string>} */
+  const sections = new Map()
+  let name = ''
+  for (const raw of text.split('\n')) {
+    const line = raw.trim()
+    if (line === '' || line.startsWith('#')) continue
+    const header = line.match(TOML_SECTION)
+    if (header) {
+      // Die Gruppe ist im Muster Pflicht: passt es, ist sie gesetzt.
+      name = /** @type {string} */ (header[1])
+      sections.set(name, `${sections.get(name) ?? ''}${line}\n`)
+      continue
+    }
+    sections.set(name, `${sections.get(name) ?? ''}${line}\n`)
+  }
+  return sections
+}
+
+/**
+ * Welche Gate-Felder eines Manifests unterscheiden sich zwischen zwei Fassungen?
+ *
+ * - package.json und composer.json: ein bestehendes Skript, das sich ändert
+ *   oder verschwindet. Das Gate ruft `lint`, `test` und `build` auf, und diese
+ *   rufen oft weitere Skripte. Ein NEUES Skript ist kein Fund: es schwächt
+ *   keinen bestehenden Aufruf. Bei package.json dazu die Konfiguration von
+ *   prettier und eslint im Manifest.
+ * - pyproject.toml: die Abschnitte [tool.ruff…], [tool.mypy…], [tool.pytest…].
+ *
+ * Abhängigkeiten und die Version zählen nicht. Dafür gibt es die Lockfile-Regel.
+ *
+ * Im Zweifel leer: fehlt die alte Fassung, ist die Datei neu. Ist eine Fassung
+ * nicht lesbar, scheitert schon das Werkzeug, das sie liest.
+ *
+ * @param {string} path
+ * @param {string | null} before
+ * @param {string | null} after
+ * @returns {string[]}
+ */
+export function manifestGateChanges(path, before, after) {
+  if (before === null || after === null) return []
+
+  if (path.endsWith('.toml')) {
+    const a = tomlSections(before)
+    const b = tomlSections(after)
+    return [...new Set([...a.keys(), ...b.keys()])]
+      .filter((name) => PYPROJECT_GATE_SECTION.test(name))
+      .filter((name) => a.get(name) !== b.get(name))
+      .sort()
+  }
+
+  /** @type {Record<string, any>} */
+  let a
+  /** @type {Record<string, any>} */
+  let b
+  try {
+    a = JSON.parse(before)
+    b = JSON.parse(after)
+  } catch {
+    return []
+  }
+  /**
+   * @param {unknown} v
+   * @returns {v is Record<string, unknown>}
+   */
+  const isObject = (v) => v !== null && typeof v === 'object'
+  if (!isObject(a) || !isObject(b)) return []
+
+  /** @type {string[]} */
+  const changed = []
+  /** @type {Record<string, unknown>} */
+  const scriptsA = isObject(a.scripts) ? a.scripts : {}
+  /** @type {Record<string, unknown>} */
+  const scriptsB = isObject(b.scripts) ? b.scripts : {}
+  for (const name of Object.keys(scriptsA)) {
+    if (!isDeepStrictEqual(scriptsA[name], scriptsB[name])) changed.push(`scripts.${name}`)
+  }
+  if (path.endsWith('package.json')) {
+    for (const key of PACKAGE_CONFIG_KEYS) {
+      if (!isDeepStrictEqual(a[key], b[key])) changed.push(key)
+    }
+  }
+  return changed
+}
+
+/**
  * Fremdcode. Wird nie bewertet — auch dann nicht, wenn ein Projekt seine
  * Abhängigkeiten mitcommittet, wie es bei gewachsenen CMS-Projekten
  * regelmässig vorkommt. Ein `@ts-ignore` in einem fremden Paket ist keine
@@ -327,8 +468,17 @@ export const LINE_RULES = [
   },
   {
     id: 'test.skipped',
+    // Die Alternativen der Reihe nach:
+    // - PHPUnit und Pest: markTestSkipped, ->skip(, ->todo(
+    //   Ohne Wortgrenze davor: bei Pest steht `})->skip()`, und zwischen
+    //   `)` und `-` liegt keine.
+    // - vitest und jest: it.skip, it.skipIf, it.todo, test.fails, xit(, xdescribe(
+    // - node:test: test('x', { skip: true }, …) auf der Zeile des Aufrufs und
+    //   t.skip() / t.todo() im Test. Ein nacktes `skip:` zählt nicht: so heisst
+    //   auch ein gewöhnliches Feld.
+    // - pytest und unittest: die Marker, pytest.skip( und pytest.importorskip(
     pattern:
-      /\b(markTestSkipped|->skip\(|\b(it|test|describe|context)\.skip\b|\btest\.todo\b|@doesNotPerformAssertions|@group\s+skip)|@(pytest\.mark\.(skip|skipif|xfail)|unittest\.skip)\b|\bpytest\.skip\s*\(/,
+      /->(skip|todo)\(|\b(markTestSkipped|\b(it|test|describe|context)\.(skip|skipIf|todo|fails)\b|\bx(it|test|describe)\s*\(|\b(it|test|describe|suite)\s*\([^)]*\{[^}]*\b(skip|todo)\s*:|\bt\.(skip|todo)\s*\(|@doesNotPerformAssertions|@group\s+skip)|@(pytest\.mark\.(skip|skipif|xfail)|unittest\.skip)\b|\bpytest\.(skip|importorskip)\s*\(/,
     label: 'übersprungener Test',
     scope: 'test',
   },
@@ -376,7 +526,7 @@ export const REMOVED_LINE_RULES = [
  * @returns {DiffFile[]}
  */
 export function parseDiff(diffText) {
-  /** @type {{ path: string | null, added: AddedLine[], removed: RemovedLine[], deleted: boolean }[]} */
+  /** @type {{ path: string | null, added: AddedLine[], removed: RemovedLine[], deleted: boolean, renamedFrom?: string }[]} */
   const files = []
   /** @type {(typeof files)[number] | null} */
   let current = null
@@ -399,6 +549,16 @@ export function parseDiff(diffText) {
     if (!current) continue
     if (raw.startsWith('deleted file mode')) {
       current.deleted = true
+      continue
+    }
+    // git meldet eine Umbenennung nicht als Löschung. Der alte Pfad steht nur
+    // hier: die Zeile "diff --git" ist bei Pfaden mit Leerzeichen mehrdeutig.
+    if (raw.startsWith('rename from ')) {
+      current.renamedFrom = raw.slice('rename from '.length)
+      continue
+    }
+    if (raw.startsWith('rename to ')) {
+      current.path = raw.slice('rename to '.length)
       continue
     }
     if (raw.startsWith('+++ ')) {
@@ -661,6 +821,26 @@ export function analyseDiff(files, { botAuthor = false, ignorePaths = [] } = {})
         })
       }
       continue
+    }
+
+    // Eine Testdatei, die nach der Umbenennung keine mehr ist, läuft nicht mehr
+    // mit: `a.test.mjs.off` findet kein Test-Runner. Das wirkt wie eine Löschung.
+    if (file.renamedFrom && isTestFile(file.renamedFrom) && !isTestFile(file.path)) {
+      findings.push({
+        rule: 'test.deleted',
+        path: file.renamedFrom,
+        label: 'aus dem Testlauf umbenannte Testdatei',
+        detail: `Heisst jetzt ${file.path} und zählt nicht mehr als Testdatei.`,
+      })
+    }
+
+    if (file.gateFields?.length) {
+      findings.push({
+        rule: 'protected.changed',
+        label: `Gate-Felder geändert (${file.gateFields.join(', ')})`,
+        path: file.path,
+        detail: 'Das Gate ruft diese Skripte auf oder liest diese Konfiguration.',
+      })
     }
 
     for (const { pattern, label, shrinkOnly, botMayChange } of PROTECTED_PATHS) {

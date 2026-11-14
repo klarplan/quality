@@ -5,12 +5,14 @@ import { c } from '../lib/run.mjs'
 import {
   COMPOSER_LOCKFILE,
   EXCEPTION_TRAILER,
+  GATE_MANIFEST,
   NPM_LOCKFILE,
   SOFT_LOCALLY,
   analyseDiff,
   composerLockOnlyRehashes,
   findException,
   lockfileOnlyBumpsOwnVersion,
+  manifestGateChanges,
   parseDiff,
 } from './tamper.mjs'
 
@@ -202,6 +204,38 @@ function markOwnVersionBumps(files, root, before, after) {
       })
     }
     return ownVersionOnly ? { ...file, ownVersionOnly: true } : file
+  })
+}
+
+/**
+ * Markiert jedes Manifest, in dem sich ein Gate-Feld ändert: ein Skript in
+ * package.json oder composer.json, ein Werkzeug-Abschnitt in pyproject.toml.
+ *
+ * Die Fassungen passen zum geprüften Diff, wie bei `markOwnVersionBumps`.
+ * Bei einer Umbenennung liegt die alte Fassung unter dem alten Pfad.
+ *
+ * @param {DiffFile[]} files
+ * @param {string} root
+ * @param {string} before
+ * @param {string | null} after
+ * @returns {DiffFile[]}
+ */
+function markGateFields(files, root, before, after) {
+  return files.map((file) => {
+    if (file.deleted || !GATE_MANIFEST.test(file.path)) return file
+    let current
+    if (after) {
+      current = showAt(root, after, file.path)
+    } else {
+      try {
+        current = readFileSync(join(root, file.path), 'utf8')
+      } catch {
+        current = null
+      }
+    }
+    const previous = showAt(root, before, file.renamedFrom ?? file.path)
+    const gateFields = manifestGateChanges(file.path, previous, current)
+    return gateFields.length > 0 ? { ...file, gateFields } : file
   })
 }
 
@@ -500,7 +534,12 @@ export function runTamper({
   if (base) {
     const mergeBase = mergeBaseOf(base, root)
     const diffText = git(['diff', '--unified=0', mergeBase, 'HEAD'], root)
-    const files = markOwnVersionBumps(parseDiff(diffText), root, mergeBase, 'HEAD')
+    const files = markGateFields(
+      markOwnVersionBumps(parseDiff(diffText), root, mergeBase, 'HEAD'),
+      root,
+      mergeBase,
+      'HEAD',
+    )
     branchFindings = analyseDiff(files, { botAuthor, ignorePaths })
   }
 
@@ -510,7 +549,12 @@ export function runTamper({
     const diffText = committed ? git(['diff', '--unified=0', 'HEAD'], root) : ''
     // `git diff` kennt neu angelegte, noch nicht erfasste Dateien nicht.
     worktreeFiles = [
-      ...markOwnVersionBumps(parseDiff(diffText), root, 'HEAD', null),
+      ...markGateFields(
+        markOwnVersionBumps(parseDiff(diffText), root, 'HEAD', null),
+        root,
+        'HEAD',
+        null,
+      ),
       ...untrackedAsAdded(root, { includeCached: !committed }),
     ]
   }

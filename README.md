@@ -337,6 +337,41 @@ Skript nicht abschwächen, das ihn danach prüft. Der PreToolUse-Hook sperrt die
 Datei deshalb wie die übrige Gate-Konfiguration. Test-Muster werden nur in Testdateien gesucht — eine
 Funktion namens `skip()` im Produktivcode ist gewöhnlicher Code.
 
+Seit dem Audit vom 14.11.2026 deckt der Check weitere Stellen ab:
+
+- **Mehr Konfiguration.** Geschützt sind auch `phpstan.dist.neon`, `ruff.toml`,
+  `mypy.ini`, `.eslintrc*` und `.oxlintrc.jsonc`. Der PreToolUse-Hook sperrt
+  sie.
+- **Nur gemeldet, nicht gesperrt:** `tsconfig*.json`, `vitest.config.*`,
+  `phpunit.xml` und `pytest.ini`. Der Tamper-Check meldet eine Änderung als
+  `protected.changed`. Der Hook lässt sie durch, weil ein Agent diese Dateien
+  regelmässig legitim ändert.
+- **Gate-Felder in Manifesten.** `package.json`, `composer.json` und
+  `pyproject.toml` lassen sich nicht als ganze Datei schützen: jede neue
+  Abhängigkeit wäre ein Fund. Der Check vergleicht deshalb beide Fassungen und
+  meldet nur diese Felder:
+  - `package.json` und `composer.json`: ein bestehendes Skript, das sich ändert
+    oder verschwindet. Das Gate ruft `lint`, `test` und `build` auf. Ein neues
+    Skript zählt nicht.
+  - `package.json`: dazu `prettier`, `eslintConfig` und `eslintIgnore`.
+  - `pyproject.toml`: die Abschnitte `[tool.ruff…]`, `[tool.mypy…]` und
+    `[tool.pytest…]`.
+
+  Eine neue Abhängigkeit oder ein Versionssprung meldet weiterhin nur die
+  Lockfile-Regel.
+
+- **Mehr Wege, einen Test stillzulegen.** `xit(`, `xdescribe(`, `it.skipIf`,
+  `it.todo`, `describe.todo`, `test.fails`, bei node:test `{ skip: … }` und
+  `{ todo: … }` auf der Zeile des Aufrufs sowie `t.skip()` und `t.todo()`, bei
+  Pest `->todo()`, bei pytest `pytest.importorskip(`.
+- **Umbenannte Testdatei.** Heisst eine Testdatei nach der Umbenennung nicht
+  mehr wie eine Testdatei, zählt das wie eine Löschung (`test.deleted`).
+- **Suppressions** auch in `.mts`, `.cts` und `.svelte`.
+
+Die Grenze offen benannt: Ein Test, dessen Assertion jemand gegen
+`expect(true).toBe(true)` tauscht, bleibt unbemerkt. Das fände nur eine
+Coverage- oder Mutationsmessung.
+
 Seit v0.2.0 zusätzlich zwei Dinge, die keine hinzugefügte Codezeile hinterlassen:
 
 - **Netto entfernte Assertions** in einer Testdatei, die bleibt. Ein roter Test
@@ -536,11 +571,11 @@ erreicht die Nutzer erst, wenn diese Nummer steigt. Laufende Sessions behalten
 die alte Version. Starte sie neu oder rufe `/reload-plugins` auf. Wie ein
 Release entsteht, steht unter [Release von quality](#release-von-quality).
 
-| Hook        | Wann               | Was                                                                                                                                           |
-| ----------- | ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| PreToolUse  | vor Edit/Write     | verweigert Schreibzugriff auf Baselines, Gate- und Linter-Konfiguration, CI-Workflows; bei einer Baseline nennt die Ablehnung `quality prune` |
-| PostToolUse | nach jedem Edit    | formatiert und lintet **die eine** geänderte Datei, meldet Fundstellen zurück                                                                 |
-| Stop        | vor Task-Abschluss | führt `quality fast --check` aus und blockiert, solange etwas rot ist                                                                         |
+| Hook        | Wann               | Was                                                                                                                                                                                                   |
+| ----------- | ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| PreToolUse  | vor Edit/Write     | verweigert Schreibzugriff auf Baselines, Gate- und Linter-Konfiguration, CI-Workflows; bei einer Baseline nennt die Ablehnung `quality prune`. tsconfig und Test-Runner-Konfiguration sperrt er nicht |
+| PostToolUse | nach jedem Edit    | formatiert und lintet **die eine** geänderte Datei, meldet Fundstellen zurück                                                                                                                         |
+| Stop        | vor Task-Abschluss | führt `quality fast --check` aus und blockiert, solange etwas rot ist                                                                                                                                 |
 
 Drei Eigenschaften sind dabei wichtiger als die Hooks selbst:
 
