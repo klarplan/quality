@@ -157,6 +157,8 @@ test('fmt: bleibt nach dem Filtern keine Datei übrig, entfällt der Schritt', (
 
   const step = reactTs.fmt?.(context(dir, { files: ['WORKER.md'] }))
   assert.ok(step && 'skip' in step && step.skip, 'fmt meldet den Schritt als entfallen')
+  // Keine Datei für prettier ist keine fehlende Prüfung, auch nicht als Pflicht.
+  assert.equal(step?.nothingToDo, true)
 })
 
 test('fmt: Glob-Zeichen im Dateinamen werden für die Negation maskiert', (t) => {
@@ -674,4 +676,5 @@ test('lint: ignoriert eslint mit .eslintrc alle Dateien, entfällt der Schritt',
   const step = reactTs.lint?.(context(dir, { files: ['legacy/alt.ts'] }))
   assert.equal(step?.cmd, undefined)
   assert.ok(step?.skip)
+  assert.equal(step?.nothingToDo, true)
 })

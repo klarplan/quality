@@ -442,6 +442,7 @@ test('phpstan: liegt keine geänderte Datei in den paths, entfällt der Lauf sta
 
   const step = laravel.types?.(context(where, { files: ['tests/Feature/ImportTest.php'] }))
   assert.match(step?.skip ?? '', /paths/)
+  assert.equal(step?.nothingToDo, true)
   assert.equal(step?.cmd, undefined)
   assert.deepEqual(
     host.calls().filter((c) => c.startsWith('exec')),

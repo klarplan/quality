@@ -97,6 +97,7 @@ function phpstanStep(ctx, tool) {
       return {
         name: `phpstan level ${ctx.component.phpstanLevel} (${ctx.component.path})`,
         skip: `keine geänderte Datei liegt in den paths von ${configFile}`,
+        nothingToDo: true,
       }
     }
     args.push(...files)

@@ -357,7 +357,8 @@ export default {
     const targets = ctx.files?.length
       ? ctx.files.filter((f) => !isExcluded(f))
       : ['.', ...excluded.map(negation)]
-    if (targets.length === 0) return { name: 'prettier', skip: 'nur Dateien aus .git/info/exclude' }
+    if (targets.length === 0)
+      return { name: 'prettier', skip: 'nur Dateien aus .git/info/exclude', nothingToDo: true }
     return {
       name: `prettier${ctx.check ? ' (prüfend)' : ''} (${ctx.component.path})`,
       ...jsCommand(
@@ -400,7 +401,7 @@ export default {
         const run = wantsFiles && ctx.files ? LINT_FILE_RUN[tool](bin, ctx, ctx.files) : null
         // Kein Rückfall auf das ganze Projekt, wenn eslint alle Dateien ignoriert.
         if (run && run.files.length === 0)
-          return { name, skip: `nur Dateien, die ${tool} ignoriert` }
+          return { name, skip: `nur Dateien, die ${tool} ignoriert`, nothingToDo: true }
         return {
           name,
           ...jsCommand(
