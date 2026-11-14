@@ -936,20 +936,81 @@ export function analyseDiff(files, { botAuthor = false, ignorePaths = [] } = {})
 }
 
 /**
- * Sucht den Ausnahme-Trailer in den Commit-Nachrichten des geprüften Bereichs.
+ * Der Trailer, mit oder ohne Regel in Klammern:
+ *   Quality-Exception: <Grund>
+ *   Quality-Exception(dependency.changed, test.skipped): <Grund>
+ */
+const TRAILER_LINE = /^quality-exception\s*(?:\(([^)]*)\))?\s*:\s*(.*)$/i
+
+/**
+ * Eine Ausnahme aus einem Commit. `rules` ist null, wenn der Trailer keine
+ * Regel nennt. Er gilt dann für jede Regel.
+ *
+ * @typedef {{ rules: string[] | null, reason: string }} Exception
+ */
+
+/**
+ * Liest alle Ausnahme-Trailer aus den Commit-Nachrichten des geprüften Bereichs.
+ *
+ * Ein Trailer mit Regel entschuldigt nur Funde dieser Regel. Der Anlass: jede
+ * Lockfile-Änderung braucht einen Trailer, und der entschuldigte bisher auch
+ * eine Suppression oder einen gelöschten Test im selben Bereich.
+ *
+ * Ein Trailer ohne Grund zählt nicht. Eine leere Klammer zählt auch nicht: sie
+ * nennt keine Regel und ist kein Trailer ohne Regel.
+ *
+ * @param {string[]} commitMessages
+ * @returns {Exception[]}
+ */
+export function findExceptions(commitMessages) {
+  /** @type {Exception[]} */
+  const exceptions = []
+  for (const message of commitMessages) {
+    for (const line of message.split('\n')) {
+      const hit = TRAILER_LINE.exec(line.trim())
+      if (!hit) continue
+      const reason = (hit[2] ?? '').trim()
+      if (!reason) continue
+      if (hit[1] === undefined) {
+        exceptions.push({ rules: null, reason })
+        continue
+      }
+      const rules = hit[1]
+        .split(',')
+        .map((rule) => rule.trim())
+        .filter(Boolean)
+      if (rules.length > 0) exceptions.push({ rules, reason })
+    }
+  }
+  return exceptions
+}
+
+/**
+ * Der Grund, der einen Fund dieser Regel entschuldigt — sonst null.
+ *
+ * Eine genannte Regel passt genau (`test.skipped`) oder als Familie vor dem
+ * Punkt (`suppression` für `suppression.typescript`).
+ *
+ * @param {string} rule
+ * @param {Exception[]} exceptions
+ * @returns {string | null}
+ */
+export function exceptionFor(rule, exceptions) {
+  const hit = exceptions.find(
+    ({ rules }) =>
+      rules === null || rules.some((name) => rule === name || rule.startsWith(`${name}.`)),
+  )
+  return hit ? hit.reason : null
+}
+
+/**
+ * Der Grund des ersten Ausnahme-Trailers im geprüften Bereich, mit oder ohne
+ * Regel. Für Aufrufer, die nur wissen wollen, ob der Bereich eine Ausnahme
+ * trägt — etwa scripts/gate.sh von resplan.
  *
  * @param {string[]} commitMessages
  * @returns {string | null}
  */
 export function findException(commitMessages) {
-  for (const message of commitMessages) {
-    for (const line of message.split('\n')) {
-      const trimmed = line.trim()
-      if (trimmed.toLowerCase().startsWith(EXCEPTION_TRAILER.toLowerCase())) {
-        const reason = trimmed.slice(EXCEPTION_TRAILER.length).trim()
-        if (reason) return reason
-      }
-    }
-  }
-  return null
+  return findExceptions(commitMessages)[0]?.reason ?? null
 }

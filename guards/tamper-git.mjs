@@ -4,13 +4,13 @@ import { dirname, join } from 'node:path'
 import { c } from '../lib/run.mjs'
 import {
   COMPOSER_LOCKFILE,
-  EXCEPTION_TRAILER,
   GATE_MANIFEST,
   NPM_LOCKFILE,
   SOFT_LOCALLY,
   analyseDiff,
   composerLockOnlyRehashes,
-  findException,
+  exceptionFor,
+  findExceptions,
   lockfileOnlyBumpsOwnVersion,
   manifestGateChanges,
   parseDiff,
@@ -606,10 +606,18 @@ export function runTamper({
   }
 
   const messages = base ? git(['log', `${base}..HEAD`, '--format=%B%x00'], root).split('\0') : []
-  const exception = findException(messages)
-  // Der Trailer begründet nur, was in einem Commit steht.
-  const excused = exception ? branchFindings.length : 0
-  const blocking = [...(exception ? [] : branchFindings), ...worktreeFindings]
+  const exceptions = findExceptions(messages)
+  // Der Trailer begründet nur, was in einem Commit steht. Nennt er eine Regel,
+  // begründet er nur Funde dieser Regel.
+  const branchEntries = branchFindings.map((finding) => ({
+    finding,
+    reason: exceptionFor(finding.rule, exceptions),
+  }))
+  const excusedEntries = branchEntries.filter((entry) => entry.reason !== null)
+  const blocking = [
+    ...branchEntries.filter((entry) => entry.reason === null).map((entry) => entry.finding),
+    ...worktreeFindings,
+  ]
 
   const write = (/** @type {string} */ s) => process.stdout.write(s)
   write('\n' + c.bold('── Tamper-Check ──') + '\n')
@@ -617,7 +625,7 @@ export function runTamper({
   /** @type {Map<string, { finding: Finding, excused: boolean }[]>} */
   const byFile = new Map()
   const entries = [
-    ...branchFindings.map((finding) => ({ finding, excused: Boolean(exception) })),
+    ...branchEntries.map(({ finding, reason }) => ({ finding, excused: reason !== null })),
     ...worktreeFindings.map((finding) => ({ finding, excused: false })),
   ]
   for (const entry of entries) {
@@ -631,13 +639,27 @@ export function runTamper({
     write(`\n${c.bold(path)}\n`)
     for (const { finding: e, excused: ok } of entries) {
       const where = e.line ? `${c.dim(`:${e.line}`)}` : ''
-      write(`  ${ok ? c.yellow('!') : c.red('✗')} ${e.label}${where}\n`)
+      // Die Regel steht dabei: ein Trailer nennt sie in Klammern.
+      write(`  ${ok ? c.yellow('!') : c.red('✗')} ${e.label}${where} ${c.dim(`[${e.rule}]`)}\n`)
       if (e.detail) write(`      ${c.dim(e.detail)}\n`)
     }
   }
 
-  if (excused > 0) {
-    write(c.yellow(`\n${excused} Treffer, durchgewinkt per Ausnahme: „${exception}"\n`))
+  if (excusedEntries.length > 0) {
+    const reasons = [...new Set(excusedEntries.map((entry) => entry.reason))]
+    write(
+      c.yellow(
+        `\n${excusedEntries.length} Treffer, durchgewinkt per Ausnahme: ${reasons.map((r) => `„${r}"`).join(', ')}\n`,
+      ),
+    )
+    if (exceptions.some(({ rules }) => rules === null)) {
+      write(
+        c.dim(
+          `Ein Trailer ohne Regel entschuldigt jeden Fund. Nenne die Regel: ` +
+            `Quality-Exception(<regel>): <Grund>\n`,
+        ),
+      )
+    }
   }
   if (informational.length > 0) write('\n' + hint())
   if (blocking.length === 0) return 0
@@ -649,7 +671,7 @@ export function runTamper({
   write(
     c.dim(
       `\nWenn das hier beabsichtigt ist, gehört die Begründung in den Commit:\n` +
-        `    ${EXCEPTION_TRAILER} <warum das nötig ist>\n`,
+        `    Quality-Exception(${[...new Set(blocking.map((f) => f.rule))].join(', ')}): <warum das nötig ist>\n`,
     ),
   )
   return 1

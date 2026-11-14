@@ -542,6 +542,23 @@ Quality-Exception: Test hängt an einem externen Dienst, Ticket #123
 Die Treffer verschwinden dadurch nicht aus der Ausgabe — sie blockieren nur
 nicht mehr.
 
+Der Trailer nennt die Regel, die er entschuldigt, in Klammern. Mehrere Regeln
+trennt ein Komma. Der Name vor dem Punkt steht für die ganze Familie:
+
+```
+Quality-Exception(dependency.changed): axios 1.8 behebt CVE-2026-1234
+Quality-Exception(dependency.changed, test.skipped): Ticket #123
+Quality-Exception(suppression): Typen der Bibliothek fehlen
+```
+
+Die Ausgabe des Checks nennt die Regel je Treffer in eckigen Klammern und
+schlägt den passenden Trailer vor. Ein Trailer mit Regel entschuldigt nur Funde
+dieser Regel. Der Anlass: jede Lockfile-Änderung braucht einen Trailer, und der
+entschuldigte bisher auch eine Suppression im selben Bereich.
+
+Ein Trailer ohne Regel gilt weiter für jeden Fund. Der Check weist dann darauf
+hin. Wann diese Form entfällt, ist nicht entschieden.
+
 **Die Grenze ehrlich benannt:** Ein Agent kann diesen Trailer selbst setzen.
 Der Mechanismus macht Umgehung nicht unmöglich, sondern _unübersehbar_ — sie
 steht dann als Begründung in der Commit-Historie statt still im Code. Das ist
