@@ -1,5 +1,6 @@
 import { execFileSync } from 'node:child_process'
 import { existsSync, writeFileSync } from 'node:fs'
+import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { COMMANDS, ONLY_NAMES, STAGES, parseArgs, planFor } from '../lib/args.mjs'
@@ -43,6 +44,11 @@ Prüfstufen
   ${c.bold('quality tamper')} nur den Tamper-Check: sucht im Diff nach Mustern, die ein Gate
                  umgehen statt erfüllen (Suppressions, stillgelegte Tests, Baselines)
 
+Board-Gate
+  ${c.bold('quality gate')}   Stufe task mit Tamper-Check gegen die Basis, in einem Aufruf.
+                 Basis: --base, sonst CC_INTEGRATION_BASE, sonst origin/main.
+                 Bricht bei offenem Merge oder ungültiger Basis ab (Exit 2).
+
 Einstieg in ein bestehendes Projekt
   ${c.bold('quality audit')}  misst den Ist-Zustand und schlägt eine Konfiguration vor.
                  Ändert nichts und blockiert nie. ${c.dim('(dauert Minuten)')}
@@ -84,6 +90,9 @@ Optionen
           --dry-run        nur zeigen, was geschrieben würde
           --force          bestehende Dateien überschreiben
   ${c.dim('prune:')} --dry-run        nur zeigen, was entfernt würde
+  ${c.dim('gate:')}  --build          Stufe full statt task
+          --secrets        gitleaks über die Commits des Branches und den
+                           Merge-Commit. Version und Prüfsumme stehen im Paket.
   ${c.dim('deploy-check:')} --wait <s>  auf laufende Checks warten, höchstens <s> Sekunden
 `
 }
@@ -172,6 +181,64 @@ async function runInitCommand(options) {
   })
   printInitResult(result, { dryRun: options.dryRun })
   return result.written.length === 0 ? 1 : 0
+}
+
+/**
+ * `quality gate` — das Board-Gate in einem Aufruf: Basis bestimmen, Stufe mit
+ * Tamper-Check, auf Wunsch der Secret-Scan. Jeder Teil läuft, auch nach einem
+ * roten Teil. So zeigt eine Runde alle Befunde.
+ *
+ * @param {Options} options
+ * @returns {Promise<number>}
+ */
+async function runGateCommand(options) {
+  const { GateError, assertGateReady, resolveBase, secretScanSteps } =
+    await import('../lib/gate.mjs')
+  const { GITLEAKS_VERSION, ensureGitleaks, gitleaksCacheDir } = await import('../lib/gitleaks.mjs')
+  const root = repoRoot()
+  const base = resolveBase(options.base, process.env)
+  process.stdout.write(c.dim(`Basis: ${base}\n`))
+  try {
+    assertGateReady(root, base)
+  } catch (err) {
+    if (err instanceof GateError) {
+      process.stderr.write(c.red(`${err.message}\n`))
+      return 2
+    }
+    throw err
+  }
+
+  const stageName = options.build ? 'full' : 'task'
+  /** @type {Array<{ name: string, code: number }>} */
+  const parts = [
+    { name: `quality ${stageName}`, code: await runStage(stageName, { ...options, base }) },
+  ]
+
+  if (options.secretScan) {
+    const name = 'Secret-Scan'
+    let code
+    try {
+      const binary = await ensureGitleaks({ cacheDir: gitleaksCacheDir(process.env, homedir()) })
+      const results = await runSteps(secretScanSteps({ root, base, binary }), {
+        quiet: options.quiet,
+      })
+      code = summarize(results, {
+        label: `quality gate — ${name} (gitleaks ${GITLEAKS_VERSION})`,
+      })
+    } catch (err) {
+      process.stderr.write(c.red(`\ngitleaks laden: ${messageOf(err)}\n`))
+      code = 1
+    }
+    parts.push({ name, code })
+  }
+
+  const red = parts.filter((p) => p.code !== 0)
+  if (red.length === 0) {
+    process.stdout.write(c.green('\nGate grün.\n'))
+    return 0
+  }
+  process.stdout.write(c.red(`\nGate rot:\n${red.map((p) => `  - ${p.name}`).join('\n')}\n`))
+  return Math.max(...red.map((p) => p.code))
 }
 
 /**
@@ -280,6 +347,7 @@ async function main() {
       if (options.stage === 'prune') return await runPruneCommand(options)
       if (options.stage === 'deploy-check') return await runDeployCheckCommand(options)
       if (options.stage === 'init') return await runInitCommand(options)
+      if (options.stage === 'gate') return await runGateCommand(options)
       // Kein Rückfall auf init: ein neues Kommando ohne Zweig hier schriebe sonst Dateien.
       process.stderr.write(c.red(`Kommando "${options.stage}" ist noch nicht verdrahtet.\n`))
       return 2
@@ -289,14 +357,26 @@ async function main() {
     }
   }
 
+  return runStage(/** @type {string} */ (options.stage), options)
+}
+
+/**
+ * Eine Prüfstufe: Werkzeuge der Komponenten, danach der Tamper-Check.
+ * `main` und `quality gate` rufen sie gleich auf.
+ *
+ * @param {string} stageName
+ * @param {Options} options
+ * @returns {Promise<number>} Exit-Code
+ */
+async function runStage(stageName, options) {
   // Nur eigene Schlüssel: sonst gälte `constructor` als Stufe.
-  const stage = Object.hasOwn(STAGES, options.stage)
-    ? STAGES[/** @type {keyof typeof STAGES} */ (options.stage)]
+  const stage = Object.hasOwn(STAGES, stageName)
+    ? STAGES[/** @type {keyof typeof STAGES} */ (stageName)]
     : undefined
   if (!stage) {
     process.stderr.write(
       c.red(
-        `Unbekannt: "${options.stage}". Bekannt sind: ${[...Object.keys(STAGES), ...COMMANDS].join(', ')}.\n`,
+        `Unbekannt: "${stageName}". Bekannt sind: ${[...Object.keys(STAGES), ...COMMANDS].join(', ')}.\n`,
       ),
     )
     return 2
@@ -319,7 +399,7 @@ async function main() {
   if (plan.verbs.length === 0 && !plan.tamper) {
     process.stderr.write(
       c.red(
-        `--only lässt von "quality ${options.stage}" nichts übrig (Stufe kennt: ${stage.verbs.join(', ')}${stage.tamper ? ', tamper' : ''}).\n`,
+        `--only lässt von "quality ${stageName}" nichts übrig (Stufe kennt: ${stage.verbs.join(', ')}${stage.tamper ? ', tamper' : ''}).\n`,
       ),
     )
     return 2
@@ -427,8 +507,8 @@ async function main() {
   if (steps.length > 0) {
     const results = await runSteps(steps, { quiet: options.quiet, stopOnFail: false })
     const label = options.only
-      ? `quality ${options.stage} --only ${options.only.join(',')}`
-      : `quality ${options.stage}`
+      ? `quality ${stageName} --only ${options.only.join(',')}`
+      : `quality ${stageName}`
     code = summarize(results, { label: `${label} — ${config.level}` })
   } else if (plan.verbs.length > 0) {
     process.stdout.write(
