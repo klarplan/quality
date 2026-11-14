@@ -327,7 +327,10 @@ function tomlSections(text) {
   for (const raw of text.split('\n')) {
     const line = raw.trim()
     if (line === '' || line.startsWith('#')) continue
-    const header = line.match(TOML_SECTION)
+    // Strenger als TOML_SECTION: der Name besteht nur aus Schlüsselzeichen, und
+    // nach der Klammer folgt nichts. Eine Listenzeile wie `["tests"],` ist
+    // sonst ein Abschnittskopf, und der Rest des Abschnitts fiele aus dem Vergleich.
+    const header = line.match(/^\[\[?\s*([\w.-]+)\s*\]\]?\s*(#.*)?$/)
     if (header) {
       // Die Gruppe ist im Muster Pflicht: passt es, ist sie gesetzt.
       name = /** @type {string} */ (header[1])

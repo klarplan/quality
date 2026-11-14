@@ -250,6 +250,13 @@ test('pyproject.toml: neue Abhängigkeit, Versionssprung und Kommentar melden ni
   assert.deepEqual(tamper.manifestGateChanges('pyproject.toml', PYPROJECT, after), [])
 })
 
+test('pyproject.toml: eine Listenzeile mit eckiger Klammer beendet den Abschnitt nicht', () => {
+  const before =
+    '[tool.ruff.lint]\nextend-per-file-ignores = [\n  ["tests"],\n]\nselect = ["E", "F"]\n'
+  const after = before.replace('select = ["E", "F"]', 'select = []')
+  assert.deepEqual(tamper.manifestGateChanges('pyproject.toml', before, after), ['tool.ruff.lint'])
+})
+
 test('analyseDiff: markierte Gate-Felder eines Manifests melden protected.changed', () => {
   const file = {
     path: 'package.json',
