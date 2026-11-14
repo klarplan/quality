@@ -363,9 +363,16 @@ Seit dem Audit vom 14.11.2026 deckt der Check weitere Stellen ab:
 - **Mehr Wege, einen Test stillzulegen.** `xit(`, `xdescribe(`, `it.skipIf`,
   `it.todo`, `describe.todo`, `test.fails`, bei node:test `{ skip: … }` und
   `{ todo: … }` auf der Zeile des Aufrufs sowie `t.skip()` und `t.todo()`, bei
-  Pest `->todo()`, bei pytest `pytest.importorskip(`.
-- **Umbenannte Testdatei.** Heisst eine Testdatei nach der Umbenennung nicht
-  mehr wie eine Testdatei, zählt das wie eine Löschung (`test.deleted`).
+  Pest `->todo()`, bei pytest `pytest.importorskip(`, bei unittest `skipIf`,
+  `skipUnless` und `self.skipTest(`, dazu `it.concurrent.skip` und `test.fixme`.
+  `@doesNotPerformAssertions` und `@group skip` standen schon im Muster, griffen
+  aber nie. `->skip(10)` mit Zahl oder Variable ist der Query-Builder und zählt
+  nicht.
+- **Umbenannte Dateien.** Trägt eine Testdatei nach der Umbenennung das
+  Testmuster nicht mehr, zählt das wie eine Löschung (`test.deleted`). Das gilt
+  auch für `tests/FooTest.php.off` und für eine Testdatei, die nach `vendor/`
+  oder in einen ignorierten Pfad wandert. Eine wegumbenannte Gate-Konfiguration
+  wie `phpstan.neon.bak` meldet `protected.changed`.
 - **Suppressions** auch in `.mts`, `.cts` und `.svelte`.
 
 Die Grenze offen benannt: Ein Test, dessen Assertion jemand gegen

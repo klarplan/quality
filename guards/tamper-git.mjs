@@ -6,6 +6,7 @@ import {
   COMPOSER_LOCKFILE,
   GATE_MANIFEST,
   NPM_LOCKFILE,
+  VENDOR_PATH,
   SOFT_LOCALLY,
   analyseDiff,
   composerLockOnlyRehashes,
@@ -96,6 +97,13 @@ export function hasCommit(root) {
     return false
   }
 }
+
+/**
+ * Der Diff-Aufruf. Ohne `core.quotePath=false` setzt git Pfade mit Umlauten in
+ * Anführungszeichen und schreibt sie als Oktal-Escapes. Die Pfadmuster sind am
+ * Ende verankert und griffen dann nicht.
+ */
+const DIFF = ['-c', 'core.quotePath=false', 'diff', '--unified=0']
 
 const MAX_UNTRACKED_BYTES = 512 * 1024
 
@@ -222,7 +230,9 @@ function markOwnVersionBumps(files, root, before, after) {
  */
 function markGateFields(files, root, before, after) {
   return files.map((file) => {
-    if (file.deleted || !GATE_MANIFEST.test(file.path)) return file
+    // Fremdcode bewertet analyseDiff nie. Zwei git-Aufrufe je Manifest in
+    // vendor/ oder node_modules/ wären Arbeit ohne Ergebnis.
+    if (file.deleted || !GATE_MANIFEST.test(file.path) || VENDOR_PATH.test(file.path)) return file
     let current
     if (after) {
       current = showAt(root, after, file.path)
@@ -533,7 +543,7 @@ export function runTamper({
   let branchFindings = []
   if (base) {
     const mergeBase = mergeBaseOf(base, root)
-    const diffText = git(['diff', '--unified=0', mergeBase, 'HEAD'], root)
+    const diffText = git([...DIFF, mergeBase, 'HEAD'], root)
     const files = markGateFields(
       markOwnVersionBumps(parseDiff(diffText), root, mergeBase, 'HEAD'),
       root,
@@ -546,7 +556,7 @@ export function runTamper({
   /** @type {DiffFile[]} */
   let worktreeFiles = []
   if (!base || worktree) {
-    const diffText = committed ? git(['diff', '--unified=0', 'HEAD'], root) : ''
+    const diffText = committed ? git([...DIFF, 'HEAD'], root) : ''
     // `git diff` kennt neu angelegte, noch nicht erfasste Dateien nicht.
     worktreeFiles = [
       ...markGateFields(

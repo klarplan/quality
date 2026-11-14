@@ -117,6 +117,24 @@ export const TEST_NAME = /\.(test|spec)\.[mc]?[jt]sx?$|Test\.php$|_test\.py$|tes
 export const isTestFile = (/** @type {string} */ path) =>
   TEST_FILE.test(path) || TEST_NAME.test(path)
 
+/**
+ * Läuft eine Testdatei nach der Umbenennung nicht mehr als Test?
+ *
+ * Trug der alte Name das Testmuster (`a.test.mjs`, `FooTest.php`), muss der neue
+ * es auch tragen: `tests/FooTest.php.off` liegt weiter im Testordner, aber kein
+ * Test-Runner findet die Datei. Galt die Datei nur über ihren Ordner als Test,
+ * genügt es, dass sie in einem Testordner bleibt.
+ *
+ * @param {string} from
+ * @param {string} to
+ * @returns {boolean}
+ */
+export function renamedOutOfTests(from, to) {
+  if (!isTestFile(from)) return false
+  if (TEST_NAME.test(from)) return !TEST_NAME.test(to)
+  return !TEST_FILE.test(to)
+}
+
 /** Quellcode, in dem Suppressions gesucht werden — nicht in Sperr-/Buildartefakten. */
 export const SOURCE_FILE = /\.(php|[cm]?[jt]sx?|vue|svelte|py)$/i
 
@@ -416,6 +434,37 @@ export function manifestGateChanges(path, before, after) {
 export const VENDOR_PATH = /(^|\/)(vendor|node_modules|bower_components|\.venv|venv|third_party)\//
 
 /**
+ * Wege, einen Test stillzulegen. Je Zeile eine Alternative, damit jede für
+ * sich lesbar bleibt. Keine gemeinsame Wortgrenze davor: vor `->`, `@` und `#`
+ * liegt keine, und zwei Alternativen griffen deshalb bis zum 14.11.2026 nie.
+ */
+const SKIPPED_TEST = new RegExp(
+  [
+    // Pest: })->skip(), ->skip('Grund'), ->todo(). Eine Zahl oder Variable als
+    // Argument ist der Query-Builder: ->skip(10)->take(5).
+    String.raw`->(skip|todo)\((?![\d$])`,
+    // PHPUnit
+    String.raw`\bmarkTestSkipped\b`,
+    String.raw`@doesNotPerformAssertions\b`,
+    String.raw`#\[DoesNotPerformAssertions\]`,
+    String.raw`@group\s+skip\b`,
+    // vitest, jest, playwright: it.skip, it.skipIf, it.concurrent.skip, test.fixme
+    String.raw`\b(it|test|describe|context)(\.\w+)*\.(skip|skipIf|todo|fails|fixme)\b`,
+    String.raw`\bx(it|test|describe)\s*\(`,
+    // node:test: test('x', { skip: true }, …). Die Optionen stehen direkt nach
+    // dem Titel, und der Titel endet am ersten passenden Anführungszeichen. Ein
+    // nacktes `skip:` zählt nicht: so heisst auch ein gewöhnliches Feld.
+    // `skip: false` und `skip: 0` legen nichts still.
+    String.raw`\b(it|test|describe|suite)\s*\(\s*(?<quote>['"\`])(?:(?!\k<quote>).)*\k<quote>\s*,\s*\{[^}]*\b(skip|todo)\s*:(?!\s*(false|0)\b)`,
+    String.raw`\bt\.(skip|todo)\s*\(`,
+    // pytest und unittest
+    String.raw`@(pytest\.mark\.(skip|skipif|xfail)|unittest\.skip(If|Unless)?)\b`,
+    String.raw`\bpytest\.(skip|importorskip)\s*\(`,
+    String.raw`\bself\.skipTest\s*\(`,
+  ].join('|'),
+)
+
+/**
  * Muster in hinzugefügten Zeilen.
  * `scope: 'test'` beschränkt die Prüfung auf Testdateien — "skip" oder "only"
  * in Produktivcode ist gewöhnlicher Code und kein Umgehungsversuch.
@@ -470,18 +519,7 @@ export const LINE_RULES = [
   },
   {
     id: 'test.skipped',
-    // Die Alternativen der Reihe nach:
-    // - PHPUnit und Pest: markTestSkipped, ->skip(, ->todo(
-    //   Ohne Wortgrenze davor: bei Pest steht `})->skip()`, und zwischen
-    //   `)` und `-` liegt keine.
-    // - vitest und jest: it.skip, it.skipIf, it.todo, test.fails, xit(, xdescribe(
-    // - node:test: test('x', { skip: true }, …) auf der Zeile des Aufrufs und
-    //   t.skip() / t.todo() im Test. Ein nacktes `skip:` zählt nicht: so heisst
-    //   auch ein gewöhnliches Feld. Die Optionen stehen nach dem Titel; ein
-    //   Titel, der `{ skip: true }` nennt, zählt nicht. `skip: false` auch nicht.
-    // - pytest und unittest: die Marker, pytest.skip( und pytest.importorskip(
-    pattern:
-      /->(skip|todo)\(|\b(markTestSkipped|\b(it|test|describe|context)\.(skip|skipIf|todo|fails)\b|\bx(it|test|describe)\s*\(|\b(it|test|describe|suite)\s*\(\s*(?<quote>['"`]).*?\k<quote>\s*,\s*\{[^}]*\b(skip|todo)\s*:(?!\s*false\b)|\bt\.(skip|todo)\s*\(|@doesNotPerformAssertions|@group\s+skip)|@(pytest\.mark\.(skip|skipif|xfail)|unittest\.skip)\b|\bpytest\.(skip|importorskip)\s*\(/,
+    pattern: SKIPPED_TEST,
     label: 'übersprungener Test',
     scope: 'test',
   },
@@ -809,10 +847,36 @@ export function baselineOnlyShrinks(file) {
 export function analyseDiff(files, { botAuthor = false, ignorePaths = [] } = {}) {
   /** @type {Finding[]} */
   const findings = []
-  const ignored = (/** @type {string} */ path) => ignorePaths.some((p) => path.startsWith(p))
+  const skipped = (/** @type {string} */ path) =>
+    ignorePaths.some((p) => path.startsWith(p)) || VENDOR_PATH.test(path)
 
   for (const file of files) {
-    if (ignored(file.path) || VENDOR_PATH.test(file.path)) continue
+    // Eine Umbenennung hat zwei Pfade. Der alte entscheidet, ob die Datei zu
+    // prüfen war. Wandert sie in Fremdcode oder einen ignorierten Pfad, wäre sie
+    // sonst mit dem `continue` unten aus der Prüfung verschwunden.
+    const from = file.renamedFrom
+    if (from && !skipped(from)) {
+      if (renamedOutOfTests(from, file.path) || (isTestFile(from) && skipped(file.path))) {
+        findings.push({
+          rule: 'test.deleted',
+          path: from,
+          label: 'aus dem Testlauf umbenannte Testdatei',
+          detail: `Heisst jetzt ${file.path} und läuft nicht mehr als Test.`,
+        })
+      }
+      // Eine Gate-Konfiguration unter anderem Namen liest kein Werkzeug mehr.
+      const was = PROTECTED_PATHS.find(({ pattern }) => pattern.test(from))
+      if (was && !was.pattern.test(file.path) && !(botAuthor && was.botMayChange)) {
+        findings.push({
+          rule: 'protected.changed',
+          label: `${was.label} umbenannt`,
+          path: from,
+          detail: `Heisst jetzt ${file.path}. Das Werkzeug liest die Datei nicht mehr.`,
+        })
+      }
+    }
+
+    if (skipped(file.path)) continue
 
     if (file.deleted) {
       if (isTestFile(file.path)) {
@@ -824,17 +888,6 @@ export function analyseDiff(files, { botAuthor = false, ignorePaths = [] } = {})
         })
       }
       continue
-    }
-
-    // Eine Testdatei, die nach der Umbenennung keine mehr ist, läuft nicht mehr
-    // mit: `a.test.mjs.off` findet kein Test-Runner. Das wirkt wie eine Löschung.
-    if (file.renamedFrom && isTestFile(file.renamedFrom) && !isTestFile(file.path)) {
-      findings.push({
-        rule: 'test.deleted',
-        path: file.renamedFrom,
-        label: 'aus dem Testlauf umbenannte Testdatei',
-        detail: `Heisst jetzt ${file.path} und zählt nicht mehr als Testdatei.`,
-      })
     }
 
     if (file.gateFields?.length) {
