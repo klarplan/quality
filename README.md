@@ -622,6 +622,8 @@ quality gate [--base <ref>] [--build] [--secrets]
    offener Merge entsteht nur von Hand: Committe ihn und starte das Gate erneut.
 3. **Stufe:** `quality task --base <basis>`, mit `--build` `quality full`. Der
    Tamper-Check läuft in der Stufe mit.
+   `--only`, `--files` und `--all` gibt es für `gate` nicht. Mit ihnen
+   meldete das Gate grün, obwohl Tests oder Tamper-Check nicht liefen.
 4. **Secret-Scan (`--secrets`):** gitleaks 8.30.1 über die Commits
    `HEAD --not <basis>`. Ist HEAD ein Merge-Commit, prüft ein zweiter Lauf
    dessen kombinierten Diff. Dort steht, was beim Lösen von Konflikten

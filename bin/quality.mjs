@@ -115,7 +115,7 @@ async function runAuditCommand(options) {
   const { runAudit } = await import('../lib/audit-run.mjs')
   const { renderAudit } = await import('../lib/audit-report.mjs')
   const root = repoRoot()
-  const report = await runAudit(root, { quiet: options.quiet, secrets: options.secrets })
+  const report = await runAudit(root, { quiet: options.quiet, secrets: options.auditSecrets })
   const text = options.json
     ? JSON.stringify(report, null, 2) + '\n'
     : renderAudit(report, { generatedAt: new Date().toISOString().slice(0, 10) })
@@ -221,20 +221,22 @@ async function runGateCommand(options) {
   /** @type {Array<{ name: string, code: number }>} */
   const parts = [{ name: `quality ${stageName}`, code: stageCode }]
 
-  if (options.secretScan) {
+  if (options.gateSecrets) {
     const name = 'Secret-Scan'
-    let code
+    let binary = null
     try {
-      const binary = await ensureGitleaks({ cacheDir: gitleaksCacheDir(process.env, homedir()) })
+      binary = await ensureGitleaks({ cacheDir: gitleaksCacheDir(process.env, homedir()) })
+    } catch (err) {
+      process.stderr.write(c.red(`\ngitleaks laden: ${messageOf(err)}\n`))
+    }
+    let code = 1
+    if (binary) {
       const results = await runSteps(secretScanSteps({ root, base, binary }), {
         quiet: options.quiet,
       })
       code = summarize(results, {
         label: `quality gate — ${name} (gitleaks ${GITLEAKS_VERSION})`,
       })
-    } catch (err) {
-      process.stderr.write(c.red(`\ngitleaks laden: ${messageOf(err)}\n`))
-      code = 1
     }
     parts.push({ name, code })
   }
