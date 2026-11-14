@@ -160,7 +160,10 @@ test('gate --secrets: sauberer Branch → Exit 0, «Gate grün»', () => {
   const { output, code } = quality(dir, ['--base', base, '--secrets'], { XDG_CACHE_HOME: cache })
   assert.equal(code, 0, output)
   assert.match(output, /Gate grün/)
-  assert.match(readFileSync(aufrufe(cache), 'utf8'), new RegExp(`--log-opts=--no-textconv --no-ext-diff HEAD --not ${base}`))
+  assert.match(
+    readFileSync(aufrufe(cache), 'utf8'),
+    new RegExp(`--log-opts=--no-textconv --no-ext-diff HEAD --not ${base}`),
+  )
 })
 
 test('gate --secrets: Secret im Branch → Exit 1, Secret-Scan rot', () => {
