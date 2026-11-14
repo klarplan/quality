@@ -363,6 +363,59 @@ Skript nicht abschwächen, das ihn danach prüft. Der PreToolUse-Hook sperrt die
 Datei deshalb wie die übrige Gate-Konfiguration. Test-Muster werden nur in Testdateien gesucht — eine
 Funktion namens `skip()` im Produktivcode ist gewöhnlicher Code.
 
+Seit dem Audit vom 14.11.2026 deckt der Check weitere Stellen ab:
+
+- **Mehr Konfiguration.** Geschützt sind auch `phpstan.dist.neon`, `ruff.toml`,
+  `mypy.ini`, `.eslintrc*` und `.oxlintrc.jsonc`. Der PreToolUse-Hook sperrt
+  sie.
+- **Nur gemeldet, nicht gesperrt:** `tsconfig*.json`, `vitest.config.*`,
+  `phpunit.xml` und `pytest.ini`. Der Tamper-Check meldet eine Änderung als
+  `protected.changed`. Der Hook lässt sie durch, weil ein Agent diese Dateien
+  regelmässig legitim ändert.
+  In `phpunit.xml` zählen Zeilen mit `<env>`, `<server>`, `<ini>`, `<const>`
+  und Kommentare nicht: sie setzen Umgebungswerte und wählen keinen Test ab.
+- **Gate-Felder in Manifesten.** `package.json`, `composer.json` und
+  `pyproject.toml` lassen sich nicht als ganze Datei schützen: jede neue
+  Abhängigkeit wäre ein Fund. Der Check vergleicht deshalb beide Fassungen und
+  meldet nur diese Felder:
+  - `package.json` und `composer.json`: ein bestehendes Skript, das sich ändert
+    oder verschwindet. Das Gate ruft `lint`, `test` und `build` auf. Ein neues
+    Skript zählt nicht, ausser es heisst `pre<name>` zu einem vorhandenen
+    Skript: npm führt es vor `<name>` aus. Die Regel heisst
+    `gate.script-changed` und blockiert auch lokal.
+  - `package.json`: dazu `prettier`, `eslintConfig`, `eslintIgnore`, `jest`,
+    `mocha`, `c8` und `nyc` als `protected.changed`.
+  - `pyproject.toml`: die Abschnitte `[tool.ruff…]`, `[tool.mypy…]` und
+    `[tool.pytest…]` als `protected.changed`.
+
+  Eine neue Abhängigkeit oder ein Versionssprung meldet weiterhin nur die
+  Lockfile-Regel.
+
+- **Mehr Wege, einen Test stillzulegen.** `xit(`, `xdescribe(`, `it.skipIf`,
+  `it.todo`, `describe.todo`, `test.fails`, bei node:test `{ skip: … }` und
+  `{ todo: … }` auf der Zeile des Aufrufs sowie `t.skip()` und `t.todo()`, bei
+  Pest `->todo()`, bei pytest `pytest.importorskip(`, bei unittest `skipIf`,
+  `skipUnless` und `self.skipTest(`, dazu `it.concurrent.skip` und `test.fixme`.
+  `@doesNotPerformAssertions` und `@group skip` standen schon im Muster, griffen
+  aber nie. `->skip(10)` mit Zahl oder Variable ist der Query-Builder und zählt
+  nicht.
+- **Umbenannte Dateien.** Trägt eine Testdatei nach der Umbenennung das
+  Testmuster nicht mehr, zählt das wie eine Löschung (`test.deleted`). Das gilt
+  auch für `tests/FooTest.php.off` und für eine Testdatei, die nach `vendor/`
+  oder in einen ignorierten Pfad wandert. Eine wegumbenannte Gate-Konfiguration
+  wie `phpstan.neon.bak` meldet `protected.changed`.
+- **Suppressions** auch in `.mts`, `.cts` und `.svelte`.
+
+Drei Grenzen, offen benannt:
+
+- Ein Test, dessen Assertion jemand gegen `expect(true).toBe(true)` tauscht,
+  bleibt unbemerkt. Das fände nur eine Coverage- oder Mutationsmessung.
+- `vite.config.*` ist nicht geschützt, auch wenn dort `test.exclude` stehen
+  kann. Die Datei steuert vor allem den Build und ändert sich oft legitim.
+- `pyproject.toml` liest der Check ohne TOML-Parser. Gepunktete Schlüssel wie
+  `ruff.lint.ignore` unter `[tool]` erkennt er nicht. `setup.cfg`, `tox.ini` und
+  `.flake8` stehen in keiner Liste.
+
 Seit v0.2.0 zusätzlich zwei Dinge, die keine hinzugefügte Codezeile hinterlassen:
 
 - **Netto entfernte Assertions** in einer Testdatei, die bleibt. Ein roter Test
@@ -533,6 +586,23 @@ Quality-Exception: Test hängt an einem externen Dienst, Ticket #123
 Die Treffer verschwinden dadurch nicht aus der Ausgabe — sie blockieren nur
 nicht mehr.
 
+Der Trailer nennt die Regel, die er entschuldigt, in Klammern. Mehrere Regeln
+trennt ein Komma. Der Name vor dem Punkt steht für die ganze Familie:
+
+```
+Quality-Exception(dependency.changed): axios 1.8 behebt CVE-2026-1234
+Quality-Exception(dependency.changed, test.skipped): Ticket #123
+Quality-Exception(suppression): Typen der Bibliothek fehlen
+```
+
+Die Ausgabe des Checks nennt die Regel je Treffer in eckigen Klammern und
+schlägt den passenden Trailer vor. Ein Trailer mit Regel entschuldigt nur Funde
+dieser Regel. Der Anlass: jede Lockfile-Änderung braucht einen Trailer, und der
+entschuldigte bisher auch eine Suppression im selben Bereich.
+
+Ein Trailer ohne Regel gilt weiter für jeden Fund. Der Check weist dann darauf
+hin. Wann diese Form entfällt, ist nicht entschieden.
+
 **Die Grenze ehrlich benannt:** Ein Agent kann diesen Trailer selbst setzen.
 Der Mechanismus macht Umgehung nicht unmöglich, sondern _unübersehbar_ — sie
 steht dann als Begründung in der Commit-Historie statt still im Code. Das ist
@@ -562,11 +632,11 @@ erreicht die Nutzer erst, wenn diese Nummer steigt. Laufende Sessions behalten
 die alte Version. Starte sie neu oder rufe `/reload-plugins` auf. Wie ein
 Release entsteht, steht unter [Release von quality](#release-von-quality).
 
-| Hook        | Wann               | Was                                                                                                                                           |
-| ----------- | ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| PreToolUse  | vor Edit/Write     | verweigert Schreibzugriff auf Baselines, Gate- und Linter-Konfiguration, CI-Workflows; bei einer Baseline nennt die Ablehnung `quality prune` |
-| PostToolUse | nach jedem Edit    | formatiert und lintet **die eine** geänderte Datei, meldet Fundstellen zurück                                                                 |
-| Stop        | vor Task-Abschluss | führt `quality fast --check` aus und blockiert, solange etwas rot ist                                                                         |
+| Hook        | Wann               | Was                                                                                                                                                                                                   |
+| ----------- | ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| PreToolUse  | vor Edit/Write     | verweigert Schreibzugriff auf Baselines, Gate- und Linter-Konfiguration, CI-Workflows; bei einer Baseline nennt die Ablehnung `quality prune`. tsconfig und Test-Runner-Konfiguration sperrt er nicht |
+| PostToolUse | nach jedem Edit    | formatiert und lintet **die eine** geänderte Datei, meldet Fundstellen zurück                                                                                                                         |
+| Stop        | vor Task-Abschluss | führt `quality fast --check` aus und blockiert, solange etwas rot ist                                                                                                                                 |
 
 Drei Eigenschaften sind dabei wichtiger als die Hooks selbst:
 
@@ -597,7 +667,9 @@ beheben; `src/a.ts:3:9: 'x' is declared but never used` schon.
 ### Lokal weicher als in CI
 
 Zwei Tamper-Regeln — geänderte Gate-Konfiguration und geänderte Lockfiles —
-melden lokal nur, ohne zu blockieren. Sie beschreiben Arbeit, die vom Menschen
+melden lokal nur, ohne zu blockieren. Ein geändertes Skript in `package.json`
+oder `composer.json` gehört nicht dazu: `gate.script-changed` blockiert auch
+lokal. Sie beschreiben Arbeit, die vom Menschen
 kommt, und lokal gibt es noch keinen Commit, in dem eine Ausnahme stehen
 könnte: ein Projekt käme sonst nicht einmal durch sein eigenes Onboarding, weil
 das Anlegen der `quality.yml` das Gate schliesst. In CI zählen beide Regeln

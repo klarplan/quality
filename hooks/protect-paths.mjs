@@ -43,7 +43,11 @@ if (!root) process.exit(0)
 const relativePath = relativeToRoot(filePath, root)
 if (!relativePath) process.exit(0)
 
-const hit = PROTECTED_PATHS.find(({ pattern }) => pattern.test(relativePath))
+// `reportOnly` meldet nur der Tamper-Check: tsconfig und die Konfiguration der
+// Test-Runner ändert ein Agent regelmässig legitim.
+const hit = PROTECTED_PATHS.find(
+  ({ pattern, reportOnly }) => !reportOnly && pattern.test(relativePath),
+)
 if (!hit) process.exit(0)
 
 // Bei einer Baseline gibt es einen vorgesehenen Weg. Ihn hier zu nennen ist

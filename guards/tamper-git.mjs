@@ -4,13 +4,16 @@ import { dirname, join } from 'node:path'
 import { c } from '../lib/run.mjs'
 import {
   COMPOSER_LOCKFILE,
-  EXCEPTION_TRAILER,
+  GATE_MANIFEST,
   NPM_LOCKFILE,
+  VENDOR_PATH,
   SOFT_LOCALLY,
   analyseDiff,
   composerLockOnlyRehashes,
-  findException,
+  exceptionFor,
+  findExceptions,
   lockfileOnlyBumpsOwnVersion,
+  manifestGateChanges,
   parseDiff,
 } from './tamper.mjs'
 
@@ -95,6 +98,13 @@ export function hasCommit(root) {
   }
 }
 
+/**
+ * Der Diff-Aufruf. Ohne `core.quotePath=false` setzt git Pfade mit Umlauten in
+ * Anführungszeichen und schreibt sie als Oktal-Escapes. Die Pfadmuster sind am
+ * Ende verankert und griffen dann nicht.
+ */
+const DIFF = ['-c', 'core.quotePath=false', 'diff', '--unified=0']
+
 const MAX_UNTRACKED_BYTES = 512 * 1024
 
 /**
@@ -154,6 +164,24 @@ function showAt(root, rev, path) {
 }
 
 /**
+ * Liest eine Datei im Stand `rev`. Ohne `rev` gilt das Arbeitsverzeichnis.
+ * `null`, wenn es die Datei dort nicht gibt.
+ *
+ * @param {string} root
+ * @param {string | null} rev
+ * @param {string} path
+ * @returns {string | null}
+ */
+function readAt(root, rev, path) {
+  if (rev) return showAt(root, rev, path)
+  try {
+    return readFileSync(join(root, path), 'utf8')
+  } catch {
+    return null
+  }
+}
+
+/**
  * Markiert jedes Lockfile, das nur einen Versionssprung des eigenen Pakets
  * abbildet. Dafür liest sie beide Fassungen und übergibt sie dem JSON-Vergleich.
  * Bei composer.lock liest sie zusätzlich beide Fassungen des composer.json
@@ -177,16 +205,10 @@ function markOwnVersionBumps(files, root, before, after) {
     if (file.deleted || (!npm && !composer)) return file
 
     /** @param {string} path */
-    const versions = (path) => {
-      if (after) return { before: showAt(root, before, path), after: showAt(root, after, path) }
-      let current
-      try {
-        current = readFileSync(join(root, path), 'utf8')
-      } catch {
-        current = null
-      }
-      return { before: showAt(root, before, path), after: current }
-    }
+    const versions = (path) => ({
+      before: showAt(root, before, path),
+      after: readAt(root, after, path),
+    })
 
     const lock = versions(file.path)
     let ownVersionOnly
@@ -202,6 +224,31 @@ function markOwnVersionBumps(files, root, before, after) {
       })
     }
     return ownVersionOnly ? { ...file, ownVersionOnly: true } : file
+  })
+}
+
+/**
+ * Markiert jedes Manifest, in dem sich ein Gate-Feld ändert: ein Skript in
+ * package.json oder composer.json, ein Werkzeug-Abschnitt in pyproject.toml.
+ *
+ * Die Fassungen passen zum geprüften Diff, wie bei `markOwnVersionBumps`.
+ * Bei einer Umbenennung liegt die alte Fassung unter dem alten Pfad.
+ *
+ * @param {DiffFile[]} files
+ * @param {string} root
+ * @param {string} before
+ * @param {string | null} after
+ * @returns {DiffFile[]}
+ */
+function markGateFields(files, root, before, after) {
+  return files.map((file) => {
+    // Fremdcode bewertet analyseDiff nie. Zwei git-Aufrufe je Manifest in
+    // vendor/ oder node_modules/ wären Arbeit ohne Ergebnis.
+    if (file.deleted || !GATE_MANIFEST.test(file.path) || VENDOR_PATH.test(file.path)) return file
+    const current = readAt(root, after, file.path)
+    const previous = showAt(root, before, file.renamedFrom ?? file.path)
+    const gateFields = manifestGateChanges(file.path, previous, current)
+    return gateFields.length > 0 ? { ...file, gateFields } : file
   })
 }
 
@@ -499,18 +546,28 @@ export function runTamper({
   let branchFindings = []
   if (base) {
     const mergeBase = mergeBaseOf(base, root)
-    const diffText = git(['diff', '--unified=0', mergeBase, 'HEAD'], root)
-    const files = markOwnVersionBumps(parseDiff(diffText), root, mergeBase, 'HEAD')
+    const diffText = git([...DIFF, mergeBase, 'HEAD'], root)
+    const files = markGateFields(
+      markOwnVersionBumps(parseDiff(diffText), root, mergeBase, 'HEAD'),
+      root,
+      mergeBase,
+      'HEAD',
+    )
     branchFindings = analyseDiff(files, { botAuthor, ignorePaths })
   }
 
   /** @type {DiffFile[]} */
   let worktreeFiles = []
   if (!base || worktree) {
-    const diffText = committed ? git(['diff', '--unified=0', 'HEAD'], root) : ''
+    const diffText = committed ? git([...DIFF, 'HEAD'], root) : ''
     // `git diff` kennt neu angelegte, noch nicht erfasste Dateien nicht.
     worktreeFiles = [
-      ...markOwnVersionBumps(parseDiff(diffText), root, 'HEAD', null),
+      ...markGateFields(
+        markOwnVersionBumps(parseDiff(diffText), root, 'HEAD', null),
+        root,
+        'HEAD',
+        null,
+      ),
       ...untrackedAsAdded(root, { includeCached: !committed }),
     ]
   }
@@ -562,10 +619,18 @@ export function runTamper({
   }
 
   const messages = base ? git(['log', `${base}..HEAD`, '--format=%B%x00'], root).split('\0') : []
-  const exception = findException(messages)
-  // Der Trailer begründet nur, was in einem Commit steht.
-  const excused = exception ? branchFindings.length : 0
-  const blocking = [...(exception ? [] : branchFindings), ...worktreeFindings]
+  const exceptions = findExceptions(messages)
+  // Der Trailer begründet nur, was in einem Commit steht. Nennt er eine Regel,
+  // begründet er nur Funde dieser Regel.
+  const branchEntries = branchFindings.map((finding) => ({
+    finding,
+    reason: exceptionFor(finding.rule, exceptions),
+  }))
+  const excusedEntries = branchEntries.filter((entry) => entry.reason !== null)
+  const blocking = [
+    ...branchEntries.filter((entry) => entry.reason === null).map((entry) => entry.finding),
+    ...worktreeFindings,
+  ]
 
   const write = (/** @type {string} */ s) => process.stdout.write(s)
   write('\n' + c.bold('── Tamper-Check ──') + '\n')
@@ -573,7 +638,7 @@ export function runTamper({
   /** @type {Map<string, { finding: Finding, excused: boolean }[]>} */
   const byFile = new Map()
   const entries = [
-    ...branchFindings.map((finding) => ({ finding, excused: Boolean(exception) })),
+    ...branchEntries.map(({ finding, reason }) => ({ finding, excused: reason !== null })),
     ...worktreeFindings.map((finding) => ({ finding, excused: false })),
   ]
   for (const entry of entries) {
@@ -587,13 +652,27 @@ export function runTamper({
     write(`\n${c.bold(path)}\n`)
     for (const { finding: e, excused: ok } of entries) {
       const where = e.line ? `${c.dim(`:${e.line}`)}` : ''
-      write(`  ${ok ? c.yellow('!') : c.red('✗')} ${e.label}${where}\n`)
+      // Die Regel steht dabei: ein Trailer nennt sie in Klammern.
+      write(`  ${ok ? c.yellow('!') : c.red('✗')} ${e.label}${where} ${c.dim(`[${e.rule}]`)}\n`)
       if (e.detail) write(`      ${c.dim(e.detail)}\n`)
     }
   }
 
-  if (excused > 0) {
-    write(c.yellow(`\n${excused} Treffer, durchgewinkt per Ausnahme: „${exception}"\n`))
+  if (excusedEntries.length > 0) {
+    const reasons = [...new Set(excusedEntries.map((entry) => entry.reason))]
+    write(
+      c.yellow(
+        `\n${excusedEntries.length} Treffer, durchgewinkt per Ausnahme: ${reasons.map((r) => `„${r}"`).join(', ')}\n`,
+      ),
+    )
+    if (exceptions.some(({ rules }) => rules === null)) {
+      write(
+        c.dim(
+          `Ein Trailer ohne Regel entschuldigt jeden Fund. Nenne die Regel: ` +
+            `Quality-Exception(<regel>): <Grund>\n`,
+        ),
+      )
+    }
   }
   if (informational.length > 0) write('\n' + hint())
   if (blocking.length === 0) return 0
@@ -605,7 +684,7 @@ export function runTamper({
   write(
     c.dim(
       `\nWenn das hier beabsichtigt ist, gehört die Begründung in den Commit:\n` +
-        `    ${EXCEPTION_TRAILER} <warum das nötig ist>\n`,
+        `    Quality-Exception(${[...new Set(blocking.map((f) => f.rule))].join(', ')}): <warum das nötig ist>\n`,
     ),
   )
   return 1

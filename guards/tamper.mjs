@@ -42,6 +42,9 @@ import { isDeepStrictEqual } from 'node:util'
  * @property {RemovedLine[] | undefined} [removed]
  * @property {boolean} deleted
  * @property {boolean | undefined} [ownVersionOnly]
+ * @property {string | undefined} [renamedFrom] alter Pfad bei einer Umbenennung
+ * @property {string[] | undefined} [gateFields] geänderte Gate-Felder eines
+ *   Manifests, gesetzt von tamper-git.mjs über `manifestGateChanges`
  */
 
 /**
@@ -54,8 +57,6 @@ import { isDeepStrictEqual } from 'node:util'
  * @property {string} label
  * @property {string} detail
  */
-
-export const EXCEPTION_TRAILER = 'Quality-Exception:'
 
 /**
  * Regeln, die lokal nur berichtet und erst in CI bindend werden.
@@ -116,13 +117,43 @@ export const TEST_NAME = /\.(test|spec)\.[mc]?[jt]sx?$|Test\.php$|_test\.py$|tes
 export const isTestFile = (/** @type {string} */ path) =>
   TEST_FILE.test(path) || TEST_NAME.test(path)
 
+/**
+ * Läuft eine Testdatei nach der Umbenennung nicht mehr als Test?
+ *
+ * Trug der alte Name das Testmuster (`a.test.mjs`, `FooTest.php`), muss der neue
+ * es auch tragen: `tests/FooTest.php.off` liegt weiter im Testordner, aber kein
+ * Test-Runner findet die Datei. Galt die Datei nur über ihren Ordner als Test,
+ * genügt es, dass sie in einem Testordner bleibt.
+ *
+ * @param {string} from
+ * @param {string} to
+ * @returns {boolean}
+ */
+export function renamedOutOfTests(from, to) {
+  if (!isTestFile(from)) return false
+  if (TEST_NAME.test(from)) return !TEST_NAME.test(to)
+  return !TEST_FILE.test(to)
+}
+
 /** Quellcode, in dem Suppressions gesucht werden — nicht in Sperr-/Buildartefakten. */
-export const SOURCE_FILE = /\.(php|[jt]sx?|mjs|cjs|vue|py)$/i
+export const SOURCE_FILE = /\.(php|[cm]?[jt]sx?|vue|svelte|py)$/i
 
 /**
  * Dateien, die das Gate selbst definieren. Dieselbe Liste dient dem
  * PreToolUse-Hook als Blockliste — es soll nicht zwei Wahrheiten darüber
  * geben, was geschützt ist.
+ *
+ * `reportOnly` nimmt einen Eintrag aus der Blockliste des Hooks. Der
+ * Tamper-Check meldet die Änderung weiterhin. Das gilt für tsconfig und die
+ * Konfiguration der Test-Runner: ein Agent ändert sie regelmässig legitim,
+ * etwa für einen neuen Pfad-Alias oder eine Setup-Datei. Ein Hook, der das
+ * sperrt, hält die Arbeit auf. Gesperrt bleiben reine Linter-, Typchecker-
+ * und Formatter-Konfigurationen.
+ *
+ * `harmless` beschreibt Zeilen, die das Gate nicht verschieben. Besteht die
+ * Änderung nur aus solchen Zeilen, ist sie kein Fund.
+ *
+ * @type {{ pattern: RegExp, label: string, shrinkOnly?: boolean, botMayChange?: boolean, reportOnly?: boolean, harmless?: RegExp }[]}
  */
 export const PROTECTED_PATHS = [
   // Der CI-Workflow steht zuerst: eine Datei wie .github/workflows/quality.yml
@@ -135,7 +166,8 @@ export const PROTECTED_PATHS = [
   { pattern: /(^|\/)\.?gitleaks[-.]baseline\.json$/, label: 'gitleaks-Baseline', shrinkOnly: true },
   { pattern: /(^|\/)eslint-suppressions\.json$/, label: 'ESLint-Suppressions', shrinkOnly: true },
   { pattern: /^quality\.ya?ml$/, label: 'Quality-Konfiguration' },
-  { pattern: /(^|\/)phpstan\.neon(\.dist)?$/, label: 'PHPStan-Konfiguration' },
+  // phpstan.dist.neon liest der Stack genauso wie phpstan.neon(.dist).
+  { pattern: /(^|\/)phpstan(\.dist)?\.neon(\.dist)?$/, label: 'PHPStan-Konfiguration' },
   { pattern: /(^|\/)pint\.json$/, label: 'Pint-Konfiguration' },
   { pattern: /(^|\/)\.prettierrc/, label: 'Prettier-Konfiguration' },
   // [cm]? deckt .mjs/.cjs/.mts/.cts mit ab. Ohne das war die Linter- und
@@ -145,7 +177,31 @@ export const PROTECTED_PATHS = [
   // 16.08.2026 in rankscan/website, wo beide Dateien .mjs heissen.
   { pattern: /(^|\/)prettier\.config\.[cm]?[jt]s$/, label: 'Prettier-Konfiguration' },
   { pattern: /(^|\/)eslint\.config\.[cm]?[jt]s$/, label: 'ESLint-Konfiguration' },
-  { pattern: /(^|\/)\.oxlintrc\.json$/, label: 'oxlint-Konfiguration' },
+  // Die alte eslint-Konfiguration: .eslintrc ohne Endung und mit jeder Endung.
+  { pattern: /(^|\/)\.eslintrc(\.(c?js|mjs|json|ya?ml))?$/, label: 'ESLint-Konfiguration' },
+  { pattern: /(^|\/)\.oxlintrc\.jsonc?$/, label: 'oxlint-Konfiguration' },
+  { pattern: /(^|\/)\.?ruff\.toml$/, label: 'ruff-Konfiguration' },
+  { pattern: /(^|\/)\.?mypy\.ini$/, label: 'mypy-Konfiguration' },
+  {
+    pattern: /(^|\/)tsconfig(\.[\w-]+)?\.json$/,
+    label: 'TypeScript-Konfiguration',
+    reportOnly: true,
+  },
+  {
+    pattern: /(^|\/)vitest\.config\.[cm]?[jt]s$/,
+    label: 'vitest-Konfiguration',
+    reportOnly: true,
+  },
+  {
+    pattern: /(^|\/)phpunit(\.dist)?\.xml(\.dist)?$/,
+    label: 'PHPUnit-Konfiguration',
+    reportOnly: true,
+    // Umgebungswerte für den Testlauf: <env>, <server>, <ini>, <const> und
+    // Kommentare. Sie wählen keinen Test ab. In rankscan kam so eine Zeile in
+    // drei von rund 180 Merges dazu (Probelauf vom 14.11.2026).
+    harmless: /^\s*(<(env|server|ini|const)\s[^<>]*\/>|<!--.*-->)\s*$/,
+  },
+  { pattern: /(^|\/)pytest\.ini$/, label: 'pytest-Konfiguration', reportOnly: true },
   { pattern: /(^|\/)\.claude\/settings\.json$/, label: 'Claude-Hook-Konfiguration' },
   // Das Board-Gate (`gate = "bash scripts/gate.sh"` in ~/.cc/projects.toml)
   // läuft vor dem Push. Ein Branch darf das Skript nicht abschwächen, das ihn
@@ -265,12 +321,170 @@ export function composerLockOnlyRehashes({ lockBefore, lockAfter, manifestBefore
 }
 
 /**
+ * Manifeste, die neben Abhängigkeiten auch das Gate steuern. Als ganze Datei
+ * lassen sie sich nicht schützen: jede neue Abhängigkeit wäre ein Fund.
+ * Geprüft werden deshalb nur die Felder, die das Gate liest.
+ */
+export const GATE_MANIFEST = /(^|\/)(package\.json|composer\.json|pyproject\.toml)$/
+
+/** Felder in package.json, die Formatierer, Linter und Test-Runner als Konfiguration lesen. */
+const PACKAGE_CONFIG_KEYS = [
+  'prettier',
+  'eslintConfig',
+  'eslintIgnore',
+  'jest',
+  'mocha',
+  'c8',
+  'nyc',
+]
+
+/** Abschnitte in pyproject.toml, die ruff, mypy und pytest lesen. */
+const PYPROJECT_GATE_SECTION = /^tool\.(ruff|mypy|pytest)(\.|$)/
+
+/**
+ * Die Abschnitte einer TOML-Datei als Text je Abschnittsname.
+ *
+ * Kein TOML-Parser: verglichen wird nur, ob sich der Text eines Abschnitts
+ * ändert. Leerzeilen und Kommentarzeilen zählen nicht. Mehrere Abschnitte mit
+ * demselben Namen ([[tool.mypy.overrides]]) hängen aneinander.
+ *
+ * @param {string} text
+ * @returns {Map<string, string>}
+ */
+function tomlSections(text) {
+  /** @type {Map<string, string>} */
+  const sections = new Map()
+  let name = ''
+  for (const raw of text.split('\n')) {
+    const line = raw.trim()
+    if (line === '' || line.startsWith('#')) continue
+    // Strenger als TOML_SECTION: der Name beginnt mit einem Schlüsselzeichen, und
+    // nach der Klammer folgt nichts. Spätere Teile dürfen in Anführungszeichen
+    // stehen, etwa [tool.poetry.group."dev".dependencies]. Eine Listenzeile wie `["tests"],` ist
+    // sonst ein Abschnittskopf, und der Rest des Abschnitts fiele aus dem Vergleich.
+    const header = line.match(/^\[\[?\s*([\w-][\w.\-"' ]*?)\s*\]\]?\s*(#.*)?$/)
+    if (header) {
+      // Die Gruppe ist im Muster Pflicht: passt es, ist sie gesetzt.
+      name = /** @type {string} */ (header[1])
+      sections.set(name, `${sections.get(name) ?? ''}${line}\n`)
+      continue
+    }
+    sections.set(name, `${sections.get(name) ?? ''}${line}\n`)
+  }
+  return sections
+}
+
+/**
+ * Welche Gate-Felder eines Manifests unterscheiden sich zwischen zwei Fassungen?
+ *
+ * - package.json und composer.json: ein bestehendes Skript, das sich ändert
+ *   oder verschwindet. Das Gate ruft `lint`, `test` und `build` auf, und diese
+ *   rufen oft weitere Skripte. Ein NEUES Skript ist kein Fund: es schwächt
+ *   keinen bestehenden Aufruf. Die Ausnahme ist bei package.json ein neues
+ *   `pre<name>` zu einem vorhandenen Skript. Bei package.json dazu die
+ *   Konfiguration von prettier, eslint und den Test-Runnern im Manifest.
+ * - pyproject.toml: die Abschnitte [tool.ruff…], [tool.mypy…], [tool.pytest…].
+ *
+ * Abhängigkeiten und die Version zählen nicht. Dafür gibt es die Lockfile-Regel.
+ *
+ * Im Zweifel leer: fehlt die alte Fassung, ist die Datei neu. Ist eine Fassung
+ * nicht lesbar, scheitert schon das Werkzeug, das sie liest.
+ *
+ * @param {string} path
+ * @param {string | null} before
+ * @param {string | null} after
+ * @returns {string[]}
+ */
+export function manifestGateChanges(path, before, after) {
+  if (before === null || after === null) return []
+
+  if (path.endsWith('.toml')) {
+    const a = tomlSections(before)
+    const b = tomlSections(after)
+    return [...new Set([...a.keys(), ...b.keys()])]
+      .filter((name) => PYPROJECT_GATE_SECTION.test(name))
+      .filter((name) => a.get(name) !== b.get(name))
+      .sort()
+  }
+
+  /** @type {Record<string, any>} */
+  let a
+  /** @type {Record<string, any>} */
+  let b
+  try {
+    a = JSON.parse(before)
+    b = JSON.parse(after)
+  } catch {
+    return []
+  }
+  /**
+   * @param {unknown} v
+   * @returns {v is Record<string, unknown>}
+   */
+  const isObject = (v) => v !== null && typeof v === 'object'
+  if (!isObject(a) || !isObject(b)) return []
+
+  /** @type {string[]} */
+  const changed = []
+  /** @type {Record<string, unknown>} */
+  const scriptsA = isObject(a.scripts) ? a.scripts : {}
+  /** @type {Record<string, unknown>} */
+  const scriptsB = isObject(b.scripts) ? b.scripts : {}
+  for (const name of Object.keys(scriptsA)) {
+    if (!isDeepStrictEqual(scriptsA[name], scriptsB[name])) changed.push(`scripts.${name}`)
+  }
+  if (path.endsWith('package.json')) {
+    // npm führt `pre<name>` vor `<name>` aus. Ein neues pretest läuft also im
+    // Gate mit, ohne dass sich das test-Skript ändert.
+    for (const name of Object.keys(scriptsB)) {
+      const target = name.startsWith('pre') ? name.slice(3) : ''
+      if (!(name in scriptsA) && target && target in scriptsB) changed.push(`scripts.${name}`)
+    }
+    for (const key of PACKAGE_CONFIG_KEYS) {
+      if (!isDeepStrictEqual(a[key], b[key])) changed.push(key)
+    }
+  }
+  return changed
+}
+
+/**
  * Fremdcode. Wird nie bewertet — auch dann nicht, wenn ein Projekt seine
  * Abhängigkeiten mitcommittet, wie es bei gewachsenen CMS-Projekten
  * regelmässig vorkommt. Ein `@ts-ignore` in einem fremden Paket ist keine
  * Umgehung durch den Entwickler, sondern die Arbeit von jemand anderem.
  */
 export const VENDOR_PATH = /(^|\/)(vendor|node_modules|bower_components|\.venv|venv|third_party)\//
+
+/**
+ * Wege, einen Test stillzulegen. Je Zeile eine Alternative, damit jede für
+ * sich lesbar bleibt. Keine gemeinsame Wortgrenze davor: vor `->`, `@` und `#`
+ * liegt keine, und zwei Alternativen griffen deshalb bis zum 14.11.2026 nie.
+ */
+const SKIPPED_TEST = new RegExp(
+  [
+    // Pest: })->skip(), ->skip('Grund'), ->todo(). Eine Zahl oder Variable als
+    // Argument ist der Query-Builder: ->skip(10)->take(5).
+    String.raw`->(skip|todo)\((?![\d$])`,
+    // PHPUnit
+    String.raw`\bmarkTestSkipped\b`,
+    String.raw`@doesNotPerformAssertions\b`,
+    String.raw`#\[DoesNotPerformAssertions\]`,
+    String.raw`@group\s+skip\b`,
+    // vitest, jest, playwright: it.skip, it.skipIf, it.concurrent.skip, test.fixme
+    String.raw`\b(it|test|describe|context)(\.\w+)*\.(skip|skipIf|todo|fails|fixme)\b`,
+    String.raw`\bx(it|test|describe)\s*\(`,
+    // node:test: test('x', { skip: true }, …). Die Optionen stehen direkt nach
+    // dem Titel, und der Titel endet am ersten passenden Anführungszeichen. Ein
+    // nacktes `skip:` zählt nicht: so heisst auch ein gewöhnliches Feld.
+    // `skip: false` und `skip: 0` legen nichts still.
+    String.raw`\b(it|test|describe|suite)\s*\(\s*(?<quote>['"\`])(?:(?!\k<quote>).)*\k<quote>\s*,\s*\{[^}]*\b(skip|todo)\s*:(?!\s*(false|0)\b)`,
+    String.raw`\bt\.(skip|todo)\s*\(`,
+    // pytest und unittest
+    String.raw`@(pytest\.mark\.(skip|skipif|xfail)|unittest\.skip(If|Unless)?)\b`,
+    String.raw`\bpytest\.(skip|importorskip)\s*\(`,
+    String.raw`\bself\.skipTest\s*\(`,
+  ].join('|'),
+)
 
 /**
  * Muster in hinzugefügten Zeilen.
@@ -327,8 +541,7 @@ export const LINE_RULES = [
   },
   {
     id: 'test.skipped',
-    pattern:
-      /\b(markTestSkipped|->skip\(|\b(it|test|describe|context)\.skip\b|\btest\.todo\b|@doesNotPerformAssertions|@group\s+skip)|@(pytest\.mark\.(skip|skipif|xfail)|unittest\.skip)\b|\bpytest\.skip\s*\(/,
+    pattern: SKIPPED_TEST,
     label: 'übersprungener Test',
     scope: 'test',
   },
@@ -376,7 +589,7 @@ export const REMOVED_LINE_RULES = [
  * @returns {DiffFile[]}
  */
 export function parseDiff(diffText) {
-  /** @type {{ path: string | null, added: AddedLine[], removed: RemovedLine[], deleted: boolean }[]} */
+  /** @type {{ path: string | null, added: AddedLine[], removed: RemovedLine[], deleted: boolean, renamedFrom?: string }[]} */
   const files = []
   /** @type {(typeof files)[number] | null} */
   let current = null
@@ -399,6 +612,16 @@ export function parseDiff(diffText) {
     if (!current) continue
     if (raw.startsWith('deleted file mode')) {
       current.deleted = true
+      continue
+    }
+    // git meldet eine Umbenennung nicht als Löschung. Der alte Pfad steht nur
+    // hier: die Zeile "diff --git" ist bei Pfaden mit Leerzeichen mehrdeutig.
+    if (raw.startsWith('rename from ')) {
+      current.renamedFrom = raw.slice('rename from '.length)
+      continue
+    }
+    if (raw.startsWith('rename to ')) {
+      current.path = raw.slice('rename to '.length)
       continue
     }
     if (raw.startsWith('+++ ')) {
@@ -615,6 +838,22 @@ export function baselineOnlyShrinks(file) {
 }
 
 /**
+ * Besteht die Änderung nur aus Zeilen, die auf `harmless` passen?
+ * Leerzeilen zählen nicht. Eine Änderung ohne Zeilen ist nicht harmlos: dann
+ * hat sich etwas anderes geändert, etwa der Dateimodus.
+ *
+ * @param {DiffFile} file
+ * @param {RegExp} harmless
+ * @returns {boolean}
+ */
+function onlyHarmlessLines(file, harmless) {
+  const lines = [...file.added, ...(file.removed ?? [])]
+    .map((entry) => entry.text)
+    .filter((text) => text.trim() !== '')
+  return lines.length > 0 && lines.every((text) => harmless.test(text))
+}
+
+/**
  * Bewertet einen geparsten Diff.
  *
  * `botAuthor` unterdrückt zwei Regeln: die Lockfile-Regel — ein Renovate-Lauf
@@ -646,10 +885,36 @@ export function baselineOnlyShrinks(file) {
 export function analyseDiff(files, { botAuthor = false, ignorePaths = [] } = {}) {
   /** @type {Finding[]} */
   const findings = []
-  const ignored = (/** @type {string} */ path) => ignorePaths.some((p) => path.startsWith(p))
+  const skipped = (/** @type {string} */ path) =>
+    ignorePaths.some((p) => path.startsWith(p)) || VENDOR_PATH.test(path)
 
   for (const file of files) {
-    if (ignored(file.path) || VENDOR_PATH.test(file.path)) continue
+    // Eine Umbenennung hat zwei Pfade. Der alte entscheidet, ob die Datei zu
+    // prüfen war. Wandert sie in Fremdcode oder einen ignorierten Pfad, wäre sie
+    // sonst mit dem `continue` unten aus der Prüfung verschwunden.
+    const from = file.renamedFrom
+    if (from && !skipped(from)) {
+      if (renamedOutOfTests(from, file.path) || (isTestFile(from) && skipped(file.path))) {
+        findings.push({
+          rule: 'test.deleted',
+          path: from,
+          label: 'aus dem Testlauf umbenannte Testdatei',
+          detail: `Heisst jetzt ${file.path} und läuft nicht mehr als Test.`,
+        })
+      }
+      // Eine Gate-Konfiguration unter anderem Namen liest kein Werkzeug mehr.
+      const was = PROTECTED_PATHS.find(({ pattern }) => pattern.test(from))
+      if (was && !was.pattern.test(file.path) && !(botAuthor && was.botMayChange)) {
+        findings.push({
+          rule: 'protected.changed',
+          label: `${was.label} umbenannt`,
+          path: from,
+          detail: `Heisst jetzt ${file.path}. Das Werkzeug liest die Datei nicht mehr.`,
+        })
+      }
+    }
+
+    if (skipped(file.path)) continue
 
     if (file.deleted) {
       if (isTestFile(file.path)) {
@@ -663,9 +928,32 @@ export function analyseDiff(files, { botAuthor = false, ignorePaths = [] } = {})
       continue
     }
 
-    for (const { pattern, label, shrinkOnly, botMayChange } of PROTECTED_PATHS) {
+    // Ein Skript ändern ist Agentenverhalten und blockiert auch lokal. Die
+    // Werkzeug-Konfiguration im Manifest legt beim Onboarding ein Mensch an und
+    // bleibt lokal ein Hinweis, wie jede andere Gate-Konfiguration.
+    const scripts = (file.gateFields ?? []).filter((field) => field.startsWith('scripts.'))
+    const config = (file.gateFields ?? []).filter((field) => !field.startsWith('scripts.'))
+    if (scripts.length > 0) {
+      findings.push({
+        rule: 'gate.script-changed',
+        label: `Skript geändert (${scripts.join(', ')})`,
+        path: file.path,
+        detail: 'Das Gate ruft lint, test und build auf, und diese rufen oft weitere Skripte.',
+      })
+    }
+    if (config.length > 0) {
+      findings.push({
+        rule: 'protected.changed',
+        label: `Werkzeug-Konfiguration geändert (${config.join(', ')})`,
+        path: file.path,
+        detail: 'Linter, Typprüfung oder Test-Runner lesen diese Felder.',
+      })
+    }
+
+    for (const { pattern, label, shrinkOnly, botMayChange, harmless } of PROTECTED_PATHS) {
       if (pattern.test(file.path)) {
         if (botAuthor && botMayChange) break
+        if (harmless && onlyHarmlessLines(file, harmless)) break
         // Nur Baselines haben eine erwünschte Richtung. Schrumpft die Datei,
         // ist das kein Verschieben des Gates, sondern das Gegenteil.
         if (shrinkOnly && baselineOnlyShrinks(file)) break
@@ -756,20 +1044,81 @@ export function analyseDiff(files, { botAuthor = false, ignorePaths = [] } = {})
 }
 
 /**
- * Sucht den Ausnahme-Trailer in den Commit-Nachrichten des geprüften Bereichs.
+ * Der Trailer, mit oder ohne Regel in Klammern:
+ *   Quality-Exception: <Grund>
+ *   Quality-Exception(dependency.changed, test.skipped): <Grund>
+ */
+const TRAILER_LINE = /^quality-exception\s*(?:\(([^)]*)\))?\s*:\s*(.*)$/i
+
+/**
+ * Eine Ausnahme aus einem Commit. `rules` ist null, wenn der Trailer keine
+ * Regel nennt. Er gilt dann für jede Regel.
+ *
+ * @typedef {{ rules: string[] | null, reason: string }} Exception
+ */
+
+/**
+ * Liest alle Ausnahme-Trailer aus den Commit-Nachrichten des geprüften Bereichs.
+ *
+ * Ein Trailer mit Regel entschuldigt nur Funde dieser Regel. Der Anlass: jede
+ * Lockfile-Änderung braucht einen Trailer, und der entschuldigte bisher auch
+ * eine Suppression oder einen gelöschten Test im selben Bereich.
+ *
+ * Ein Trailer ohne Grund zählt nicht. Eine leere Klammer zählt auch nicht: sie
+ * nennt keine Regel und ist kein Trailer ohne Regel.
+ *
+ * @param {string[]} commitMessages
+ * @returns {Exception[]}
+ */
+export function findExceptions(commitMessages) {
+  /** @type {Exception[]} */
+  const exceptions = []
+  for (const message of commitMessages) {
+    for (const line of message.split('\n')) {
+      const hit = TRAILER_LINE.exec(line.trim())
+      if (!hit) continue
+      const reason = (hit[2] ?? '').trim()
+      if (!reason) continue
+      if (hit[1] === undefined) {
+        exceptions.push({ rules: null, reason })
+        continue
+      }
+      const rules = hit[1]
+        .split(',')
+        .map((rule) => rule.trim())
+        .filter(Boolean)
+      if (rules.length > 0) exceptions.push({ rules, reason })
+    }
+  }
+  return exceptions
+}
+
+/**
+ * Der Grund, der einen Fund dieser Regel entschuldigt — sonst null.
+ *
+ * Eine genannte Regel passt genau (`test.skipped`) oder als Familie vor dem
+ * Punkt (`suppression` für `suppression.typescript`).
+ *
+ * @param {string} rule
+ * @param {Exception[]} exceptions
+ * @returns {string | null}
+ */
+export function exceptionFor(rule, exceptions) {
+  const hit = exceptions.find(
+    ({ rules }) =>
+      rules === null || rules.some((name) => rule === name || rule.startsWith(`${name}.`)),
+  )
+  return hit ? hit.reason : null
+}
+
+/**
+ * Der Grund des ersten Ausnahme-Trailers im geprüften Bereich, mit oder ohne
+ * Regel. Für Aufrufer, die nur wissen wollen, ob der Bereich eine Ausnahme
+ * trägt — etwa scripts/gate.sh von resplan.
  *
  * @param {string[]} commitMessages
  * @returns {string | null}
  */
 export function findException(commitMessages) {
-  for (const message of commitMessages) {
-    for (const line of message.split('\n')) {
-      const trimmed = line.trim()
-      if (trimmed.toLowerCase().startsWith(EXCEPTION_TRAILER.toLowerCase())) {
-        const reason = trimmed.slice(EXCEPTION_TRAILER.length).trim()
-        if (reason) return reason
-      }
-    }
-  }
-  return null
+  return findExceptions(commitMessages)[0]?.reason ?? null
 }
