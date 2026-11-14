@@ -257,6 +257,13 @@ test('pyproject.toml: eine Listenzeile mit eckiger Klammer beendet den Abschnitt
   assert.deepEqual(tamper.manifestGateChanges('pyproject.toml', before, after), ['tool.ruff.lint'])
 })
 
+test('pyproject.toml: ein Abschnittskopf mit Anführungszeichen beginnt einen neuen Abschnitt', () => {
+  const before =
+    '[tool.mypy]\nstrict = true\n\n[tool.poetry.group."dev".dependencies]\npytest = "^8"\n'
+  const after = before.replace('pytest = "^8"', 'pytest = "^9"')
+  assert.deepEqual(tamper.manifestGateChanges('pyproject.toml', before, after), [])
+})
+
 test('analyseDiff: markierte Gate-Felder eines Manifests melden protected.changed', () => {
   const file = {
     path: 'package.json',
@@ -325,6 +332,8 @@ test('stillgelegter Test: gewöhnliche Testzeilen melden nicht', () => {
     "it('exit(0) beendet', () => {",
     "test('rechnet', () => {",
     "const step = { name: 'tsc', skip: 'Werkzeug fehlt' }",
+    "it('liest die Option { skip: true }', () => {",
+    "test('rechnet', { skip: false }, () => {",
     "assert.equal(result.skip, 'kein build-Skript')",
     'const todo = list.todo()',
     "await exit('x')",

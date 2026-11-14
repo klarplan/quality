@@ -58,8 +58,6 @@ import { isDeepStrictEqual } from 'node:util'
  * @property {string} detail
  */
 
-export const EXCEPTION_TRAILER = 'Quality-Exception:'
-
 /**
  * Regeln, die lokal nur berichtet und erst in CI bindend werden.
  *
@@ -327,10 +325,11 @@ function tomlSections(text) {
   for (const raw of text.split('\n')) {
     const line = raw.trim()
     if (line === '' || line.startsWith('#')) continue
-    // Strenger als TOML_SECTION: der Name besteht nur aus Schlüsselzeichen, und
-    // nach der Klammer folgt nichts. Eine Listenzeile wie `["tests"],` ist
+    // Strenger als TOML_SECTION: der Name beginnt mit einem Schlüsselzeichen, und
+    // nach der Klammer folgt nichts. Spätere Teile dürfen in Anführungszeichen
+    // stehen, etwa [tool.poetry.group."dev".dependencies]. Eine Listenzeile wie `["tests"],` ist
     // sonst ein Abschnittskopf, und der Rest des Abschnitts fiele aus dem Vergleich.
-    const header = line.match(/^\[\[?\s*([\w.-]+)\s*\]\]?\s*(#.*)?$/)
+    const header = line.match(/^\[\[?\s*([\w-][\w.\-"' ]*?)\s*\]\]?\s*(#.*)?$/)
     if (header) {
       // Die Gruppe ist im Muster Pflicht: passt es, ist sie gesetzt.
       name = /** @type {string} */ (header[1])
@@ -478,10 +477,11 @@ export const LINE_RULES = [
     // - vitest und jest: it.skip, it.skipIf, it.todo, test.fails, xit(, xdescribe(
     // - node:test: test('x', { skip: true }, …) auf der Zeile des Aufrufs und
     //   t.skip() / t.todo() im Test. Ein nacktes `skip:` zählt nicht: so heisst
-    //   auch ein gewöhnliches Feld.
+    //   auch ein gewöhnliches Feld. Die Optionen stehen nach dem Titel; ein
+    //   Titel, der `{ skip: true }` nennt, zählt nicht. `skip: false` auch nicht.
     // - pytest und unittest: die Marker, pytest.skip( und pytest.importorskip(
     pattern:
-      /->(skip|todo)\(|\b(markTestSkipped|\b(it|test|describe|context)\.(skip|skipIf|todo|fails)\b|\bx(it|test|describe)\s*\(|\b(it|test|describe|suite)\s*\([^)]*\{[^}]*\b(skip|todo)\s*:|\bt\.(skip|todo)\s*\(|@doesNotPerformAssertions|@group\s+skip)|@(pytest\.mark\.(skip|skipif|xfail)|unittest\.skip)\b|\bpytest\.(skip|importorskip)\s*\(/,
+      /->(skip|todo)\(|\b(markTestSkipped|\b(it|test|describe|context)\.(skip|skipIf|todo|fails)\b|\bx(it|test|describe)\s*\(|\b(it|test|describe|suite)\s*\(\s*(?<quote>['"`]).*?\k<quote>\s*,\s*\{[^}]*\b(skip|todo)\s*:(?!\s*false\b)|\bt\.(skip|todo)\s*\(|@doesNotPerformAssertions|@group\s+skip)|@(pytest\.mark\.(skip|skipif|xfail)|unittest\.skip)\b|\bpytest\.(skip|importorskip)\s*\(/,
     label: 'übersprungener Test',
     scope: 'test',
   },
