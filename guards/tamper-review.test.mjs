@@ -139,3 +139,66 @@ for (const [path, line] of [
     assert.deepEqual(rulesFor(/** @type {string} */ (path), /** @type {string} */ (line)), [])
   })
 }
+
+// ── phpunit.xml: Umgebungswerte sind keine Abschwächung ────────────────────
+// Probelauf vom 14.11.2026 über rund 180 Merges von rankscan: drei Commits
+// wären neu rot geworden. Jeder fügte nur eine <env>-Zeile hinzu.
+
+/**
+ * @param {string[]} added
+ * @param {string[]} [removed]
+ */
+function phpunitRules(added, removed = []) {
+  const file = {
+    path: 'phpunit.xml',
+    deleted: false,
+    added: added.map((text, index) => ({ line: index + 1, text })),
+    removed: removed.map((text) => ({ text })),
+  }
+  return analyseDiff([file]).map((f) => f.rule)
+}
+
+test('phpunit.xml: ein neuer Umgebungswert mit Kommentar meldet nicht', () => {
+  assert.deepEqual(
+    phpunitRules([
+      '        <!-- Gemini scan model empty: der Test prüft den Default im Code. -->',
+      '        <env name="GEMINI_DEFAULT_MODEL" value="" force="true"/>',
+      '        <server name="APP_ENV" value="testing"/>',
+      '        <ini name="memory_limit" value="1G"/>',
+    ]),
+    [],
+  )
+})
+
+test('phpunit.xml: ein geänderter Umgebungswert meldet nicht', () => {
+  assert.deepEqual(
+    phpunitRules(
+      ['        <env name="AI_MODE_ENABLED" value="true"/>'],
+      ['        <env name="AI_MODE_ENABLED" value="false"/>'],
+    ),
+    [],
+  )
+})
+
+test('phpunit.xml: eine entfernte Testsuite meldet weiter', () => {
+  assert.deepEqual(phpunitRules([], ['            <directory>tests/Feature</directory>']), [
+    'protected.changed',
+  ])
+})
+
+test('phpunit.xml: ein Umgebungswert neben einem neuen exclude meldet weiter', () => {
+  assert.deepEqual(
+    phpunitRules([
+      '        <env name="X" value="1"/>',
+      '            <exclude>tests/Feature/Slow</exclude>',
+    ]),
+    ['protected.changed'],
+  )
+})
+
+test('phpunit.xml: ein Attribut am Wurzelelement meldet weiter', () => {
+  assert.deepEqual(
+    phpunitRules(['         failOnWarning="false"'], ['         failOnWarning="true"']),
+    ['protected.changed'],
+  )
+})

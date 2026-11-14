@@ -150,7 +150,10 @@ export const SOURCE_FILE = /\.(php|[cm]?[jt]sx?|vue|svelte|py)$/i
  * sperrt, hält die Arbeit auf. Gesperrt bleiben reine Linter-, Typchecker-
  * und Formatter-Konfigurationen.
  *
- * @type {{ pattern: RegExp, label: string, shrinkOnly?: boolean, botMayChange?: boolean, reportOnly?: boolean }[]}
+ * `harmless` beschreibt Zeilen, die das Gate nicht verschieben. Besteht die
+ * Änderung nur aus solchen Zeilen, ist sie kein Fund.
+ *
+ * @type {{ pattern: RegExp, label: string, shrinkOnly?: boolean, botMayChange?: boolean, reportOnly?: boolean, harmless?: RegExp }[]}
  */
 export const PROTECTED_PATHS = [
   // Der CI-Workflow steht zuerst: eine Datei wie .github/workflows/quality.yml
@@ -193,6 +196,10 @@ export const PROTECTED_PATHS = [
     pattern: /(^|\/)phpunit(\.dist)?\.xml(\.dist)?$/,
     label: 'PHPUnit-Konfiguration',
     reportOnly: true,
+    // Umgebungswerte für den Testlauf: <env>, <server>, <ini>, <const> und
+    // Kommentare. Sie wählen keinen Test ab. In rankscan kam so eine Zeile in
+    // drei von rund 180 Merges dazu (Probelauf vom 14.11.2026).
+    harmless: /^\s*(<(env|server|ini|const)\s[^<>]*\/>|<!--.*-->)\s*$/,
   },
   { pattern: /(^|\/)pytest\.ini$/, label: 'pytest-Konfiguration', reportOnly: true },
   { pattern: /(^|\/)\.claude\/settings\.json$/, label: 'Claude-Hook-Konfiguration' },
@@ -831,6 +838,22 @@ export function baselineOnlyShrinks(file) {
 }
 
 /**
+ * Besteht die Änderung nur aus Zeilen, die auf `harmless` passen?
+ * Leerzeilen zählen nicht. Eine Änderung ohne Zeilen ist nicht harmlos: dann
+ * hat sich etwas anderes geändert, etwa der Dateimodus.
+ *
+ * @param {DiffFile} file
+ * @param {RegExp} harmless
+ * @returns {boolean}
+ */
+function onlyHarmlessLines(file, harmless) {
+  const lines = [...file.added, ...(file.removed ?? [])]
+    .map((entry) => entry.text)
+    .filter((text) => text.trim() !== '')
+  return lines.length > 0 && lines.every((text) => harmless.test(text))
+}
+
+/**
  * Bewertet einen geparsten Diff.
  *
  * `botAuthor` unterdrückt zwei Regeln: die Lockfile-Regel — ein Renovate-Lauf
@@ -927,9 +950,10 @@ export function analyseDiff(files, { botAuthor = false, ignorePaths = [] } = {})
       })
     }
 
-    for (const { pattern, label, shrinkOnly, botMayChange } of PROTECTED_PATHS) {
+    for (const { pattern, label, shrinkOnly, botMayChange, harmless } of PROTECTED_PATHS) {
       if (pattern.test(file.path)) {
         if (botAuthor && botMayChange) break
+        if (harmless && onlyHarmlessLines(file, harmless)) break
         // Nur Baselines haben eine erwünschte Richtung. Schrumpft die Datei,
         // ist das kein Verschieben des Gates, sondern das Gegenteil.
         if (shrinkOnly && baselineOnlyShrinks(file)) break

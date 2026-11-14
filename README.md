@@ -346,6 +346,8 @@ Seit dem Audit vom 14.11.2026 deckt der Check weitere Stellen ab:
   `phpunit.xml` und `pytest.ini`. Der Tamper-Check meldet eine Änderung als
   `protected.changed`. Der Hook lässt sie durch, weil ein Agent diese Dateien
   regelmässig legitim ändert.
+  In `phpunit.xml` zählen Zeilen mit `<env>`, `<server>`, `<ini>`, `<const>`
+  und Kommentare nicht: sie setzen Umgebungswerte und wählen keinen Test ab.
 - **Gate-Felder in Manifesten.** `package.json`, `composer.json` und
   `pyproject.toml` lassen sich nicht als ganze Datei schützen: jede neue
   Abhängigkeit wäre ein Fund. Der Check vergleicht deshalb beide Fassungen und
