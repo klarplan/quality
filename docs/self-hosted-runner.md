@@ -534,10 +534,15 @@ Seither legt `provision.sh` den Cron `/etc/cron.daily/runner-update-reste`
 an. Stand 15.11.2026: Auf der VM ist er noch nicht eingespielt. Der Cron
 prüft jeden Runner-Ordner mit den Links `bin` und `externals`:
 
-- `bin.*` und `externals.*` fallen weg, wenn kein Link darauf zeigt und der
-  Ordner älter als 60 Minuten ist. Die Altersgrenze schützt ein laufendes
-  Update: dann gibt es `bin.<neu>` schon, aber der Link zeigt noch auf die
-  alte Version.
+- Zeigen `bin` und `externals` auf verschiedene Versionen, ist ein Update
+  halb umgestellt. Der Cron lässt diesen Runner dann ganz in Ruhe.
+- `bin.*` und `externals.*` fallen weg, wenn ihre Version älter als die
+  aktive ist und der Ordner älter als 60 Minuten. Eine neuere Version bleibt
+  immer stehen. Das Selbstupdate legt `bin.<neu>` an und wartet dann auf das
+  Ende des laufenden Jobs. Erst danach stellt `update.sh` die Links um, ohne
+  zu prüfen, ob das Ziel noch da ist. Fehlt `bin.<neu>` dann, startet der
+  Runner nicht mehr. Das gilt auch für Jobs, die länger als 60 Minuten
+  laufen.
 - `_work/_update` fällt weg, wenn kein `Runner.Worker` läuft, beide Links
   auf die neueste Version zeigen und sich in `_update` seit 60 Minuten
   nichts geändert hat.

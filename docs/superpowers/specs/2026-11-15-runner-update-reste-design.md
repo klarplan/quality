@@ -29,10 +29,13 @@ Runner, bei 8 Runnern über 11 GB. Am 15.11.2026 lagen so 25 GB unter
 
 In jedem Ordner `$RUNNER_ROOT/*/*/` mit einem Link `bin`:
 
-- `bin.*` und `externals.*` fallen weg, wenn weder `bin` noch `externals`
-  darauf zeigt und der Ordner älter als 60 Minuten ist. Die Altersgrenze
-  schützt `bin.<neu>` während eines Selbstupdates: dann gibt es den Ordner
-  schon, aber der Link zeigt noch auf die alte Version.
+- Zeigen `bin` und `externals` auf verschiedene Versionen, bleibt der
+  Runner-Ordner unberührt.
+- `bin.*` und `externals.*` fallen weg, wenn ihre Version älter als die
+  aktive ist (`sort -V`) und der Ordner älter als 60 Minuten. Eine neuere
+  Version bleibt immer stehen: das Selbstupdate legt `bin.<neu>` an und
+  wartet dann auf das Ende des Jobs, der länger als 60 Minuten laufen kann.
+  Nachtrag nach dem Review vom 15.11.2026.
 - `_work/_update` fällt weg, wenn alle drei Bedingungen gelten:
   - Kein `Runner.Worker` läuft.
   - `bin` und `externals` zeigen auf die neueste vorhandene Version

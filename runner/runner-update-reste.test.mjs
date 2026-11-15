@@ -247,3 +247,41 @@ test('lässt Runner ohne Link externals unberührt', () => {
   ])
   assert.equal(existsSync(join(dir, '_work', '_update')), true)
 })
+
+test('lässt eine neuere Version stehen, auch wenn sie alt ist', () => {
+  // Das Selbstupdate legt bin.<neu> an und wartet dann auf das Ende des Jobs.
+  // Läuft der Job länger als 60 Minuten, ist bin.<neu> älter als die Grenze.
+  const base = root()
+  const dir = runner(base, { versions: ['2.338.2', '2.339.0'], active: '2.338.2', update: true })
+  run(base)
+  assert.deepEqual(entries(dir), [
+    '_work',
+    'bin',
+    'bin.2.338.2',
+    'bin.2.339.0',
+    'externals',
+    'externals.2.338.2',
+    'externals.2.339.0',
+  ])
+  assert.equal(existsSync(join(dir, '_work', '_update')), true)
+})
+
+test('lässt Runner mit halb umgestellten Links unberührt', () => {
+  // update.sh stellt erst bin um, dann externals. Bricht es dazwischen ab,
+  // zeigen die Links auf verschiedene Versionen.
+  const base = root()
+  const dir = runner(base, { versions: ['2.338.0', '2.338.2'], active: '2.338.2', update: true })
+  rmSync(join(dir, 'externals'))
+  symlinkSync('externals.2.338.0', join(dir, 'externals'))
+  run(base)
+  assert.deepEqual(entries(dir), [
+    '_work',
+    'bin',
+    'bin.2.338.0',
+    'bin.2.338.2',
+    'externals',
+    'externals.2.338.0',
+    'externals.2.338.2',
+  ])
+  assert.equal(existsSync(join(dir, '_work', '_update')), true)
+})

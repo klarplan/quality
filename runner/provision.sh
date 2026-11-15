@@ -125,8 +125,13 @@ echo "==> Aufräum-Cron für Runner-Updates (täglich)"
 # Jedes Selbstupdate eines Runners lässt die vorige Version (bin.<ver>,
 # externals.<ver>) und _work/_update liegen, zusammen rund 1,4 GB je Runner.
 # Am 15.11.2026 lagen so 25 GB unter /opt/gh-runner.
-# Die Altersgrenze von 60 Minuten schützt ein laufendes Update: dann gibt es
-# bin.<neu> schon, aber der Link bin zeigt noch auf die alte Version.
+# Es fallen nur Versionen weg, die älter als die aktive sind. Das Selbstupdate
+# legt bin.<neu> an und wartet dann auf das Ende des laufenden Jobs. Erst
+# danach stellt update.sh die Links um, ohne zu prüfen, ob das Ziel noch da
+# ist. Fehlt bin.<neu> dann, startet der Runner nicht mehr.
+# Zeigen bin und externals auf verschiedene Versionen, ist ein Update halb
+# umgestellt, und der Cron lässt den Runner-Ordner ganz in Ruhe.
+# Die Altersgrenze von 60 Minuten ist eine zweite Absicherung.
 # _update fällt erst weg, wenn kein Job läuft und beide Links auf die
 # neueste Version zeigen. Den Test dazu enthält runner-update-reste.test.mjs.
 # RUNNER_ROOT, RUNNER_WORKER_PATTERN und RUNNER_LOG setzt nur der Test.
@@ -143,11 +148,16 @@ for dir in "$root"/*/*/; do
   [ -L "$dir/bin" ] && [ -L "$dir/externals" ] || continue
   bin=$(basename "$(readlink "$dir/bin")")
   ext=$(basename "$(readlink "$dir/externals")")
+  active=${bin#bin.}
+  [ "$active" = "${ext#externals.}" ] || continue
 
   for old in "$dir"/bin.* "$dir"/externals.*; do
     [ -d "$old" ] && [ ! -L "$old" ] || continue
-    name=${old##*/}
-    if [ "$name" = "$bin" ] || [ "$name" = "$ext" ]; then continue; fi
+    ver=${old##*/}
+    ver=${ver#*.}
+    [ "$ver" != "$active" ] || continue
+    newer=$(printf '%s\n%s\n' "$ver" "$active" | sort -V | tail -n 1)
+    [ "$newer" = "$active" ] || continue
     [ -n "$(find "$old" -maxdepth 0 -mmin +60)" ] || continue
     rm -rf "$old" && $log "entfernt $old"
   done
