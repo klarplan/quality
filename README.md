@@ -117,6 +117,29 @@ liefen vier Wochen lang andere Regeln als gedacht. Wer bewusst abweicht, trägt
 das hier ein — der Hinweis verschwindet dann dauerhaft, statt bei jedem Audit
 erneut überlesen zu werden.
 
+Ebenso optional ist ein `exclude:`-Block. Er nimmt einen Ordner aus dem
+Audit, den `quality audit` über ein Manifest als Komponente erkennt, der aber
+bewusst nicht ins Gate kommt:
+
+```yaml
+exclude:
+  - path: ads-cockpit/browsershot
+    reason: Nur package.json für das Prod-Image, kein Code. Dependabot beobachtet ihn.
+```
+
+- `path` ist relativ zur Repo-Wurzel und gilt für den Ordner und alles darunter.
+- `reason` ist Pflicht. Ein Ausschluss ohne Grund ist ein Konfigurationsfehler.
+- Eine Komponente aus `components:` darf nicht in einem ausgenommenen Ordner
+  liegen. Das Gate prüft weiter nur `components:` und liest `exclude:` nicht.
+- `quality audit` misst den Ordner nicht und schlägt ihn nicht vor, also auch
+  `quality init` nicht. Der Bericht nennt ihn mit Grund unter «Ausgenommen».
+- Ein neuer Eintrag zählt im Tamper-Check als Lockerung, wie ein neuer
+  `configs`-Eintrag. Er braucht den Trailer `Quality-Exception:`.
+
+Anlass war adboard: der Audit schlug `ads-cockpit/browsershot` bei jedem Lauf
+erneut als `node-ts`-Komponente vor. Einen Ausschluss gab es nur für
+npm-Workspaces per `!`-Muster.
+
 Zwei Konfigurationen werden nicht geprüft, weil ihr Werkzeug keine Vererbung
 kennt: `pint.json` und `mypy.ini`. Beide können nur kopiert werden, und eine
 Kopie lässt sich nicht von einer eigenen Konfiguration unterscheiden.
@@ -498,6 +521,7 @@ vergleicht die effektiven Werte:
 | `level`                        | gleich oder `standard` → `strict`                         | `strict` → `standard`                 |
 | `baseline`                     | gleich oder `true` → `false`                              | `false` → `true`                      |
 | `configs`                      | Einträge entfernt                                         | Eintrag hinzugefügt                   |
+| `exclude`                      | Einträge entfernt, Grund geändert                         | neuer Pfad                            |
 | `tamper.ignore`                | Teilmenge des alten                                       | neuer Pfad                            |
 | Komponente (Schlüssel `path`)  | hinzugefügt, ohne `test_command` und unbekannte Schlüssel | entfernt, oder neu mit `test_command` |
 | `stack`, `php`, `test_command` | gleich                                                    | geändert                              |

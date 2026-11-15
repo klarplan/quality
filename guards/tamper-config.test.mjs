@@ -301,3 +301,23 @@ test('Review: Stack-Wechsel bei geteiltem path nennt den Wechsel', () => {
   const after = SAME_PATH.replace('stack: node-ts', 'stack: react-ts')
   assert.match(configLoosenings(SAME_PATH, after).join('\n'), /stack: node-ts → react-ts/)
 })
+
+test('exclude: einen Pfad hinzufügen lockert, entfernen schärft', () => {
+  // Wie configs: own stellt ein Ausschluss einen Hinweis des Audits dauerhaft
+  // ab. Darum braucht er den Trailer eines Menschen (René, 15.11.2026).
+  const one = `${BASE}exclude:\n  - { path: tools/x, reason: Nur Manifest }\n`
+  assert.match(configLoosenings(BASE, one).join('\n'), /exclude: neuer Pfad tools\/x/)
+  assert.deepEqual(configLoosenings(one, BASE), [])
+})
+
+test('exclude: den Grund ändern lockert nicht', () => {
+  const before = `${BASE}exclude:\n  - { path: tools/x, reason: Nur Manifest }\n`
+  const after = `${BASE}exclude:\n  - { path: tools/x, reason: 'Nur Manifest, kein Code' }\n`
+  assert.deepEqual(configLoosenings(before, after), [])
+})
+
+test('exclude: derselbe Pfad anders geschrieben lockert nicht', () => {
+  const before = `${BASE}exclude:\n  - { path: tools/x, reason: a }\n`
+  const after = `${BASE}exclude:\n  - { path: ./tools/x/, reason: a }\n`
+  assert.deepEqual(configLoosenings(before, after), [])
+})
