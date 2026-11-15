@@ -173,3 +173,28 @@ test('Review 6: der Hook rechnet auch bei CRLF-Zeilenenden', () => {
   })
   assert.equal(tighter.decision, 'allow')
 })
+
+// Fall calcup vom 15.11.2026: zwei Komponenten mit gleichem path.
+const SAME_PATH = `version: 1
+level: standard
+components:
+  - { path: '.', stack: laravel, php: '8.4.19', required: [fmt, types, test] }
+  - { path: '.', stack: node-ts, required: [fmt, test, build] }
+`
+
+test('Fall calcup: der Hook lässt required ergänzen an der zweiten Komponente durch', () => {
+  const answer = configHook(SAME_PATH, 'Edit', {
+    old_string: 'required: [fmt, test, build]',
+    new_string: 'required: [fmt, lint, test, build]',
+  })
+  assert.equal(answer.decision, 'allow', answer.reason)
+})
+
+test('Fall calcup: der Hook sperrt required kürzen an der zweiten Komponente', () => {
+  const answer = configHook(SAME_PATH, 'Edit', {
+    old_string: 'required: [fmt, test, build]',
+    new_string: 'required: [fmt, test]',
+  })
+  assert.equal(answer.decision, 'deny')
+  assert.match(answer.reason, /required: build entfernt/)
+})
