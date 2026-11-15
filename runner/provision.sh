@@ -210,4 +210,15 @@ done
 EOF
 chmod +x /etc/cron.hourly/runner-stale-containers
 
+echo "==> journald: Grenze 500M"
+# Ohne Grenze nimmt journald bis 10 % der Platte, höchstens 4 GB. Am
+# 15.11.2026 lag das Journal bei 2,1 GB. Mit 500M reicht es rund zwei
+# Wochen zurück. Den Test dazu enthält lib/runner-journald.test.mjs.
+mkdir -p /etc/systemd/journald.conf.d
+cat >/etc/systemd/journald.conf.d/50-groesse.conf <<'EOF'
+[Journal]
+SystemMaxUse=500M
+EOF
+systemctl restart systemd-journald
+
 echo "Fertig. Nächster Schritt: runner/register.sh je Repository."
