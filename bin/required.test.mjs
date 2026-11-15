@@ -21,15 +21,29 @@ import { test } from 'node:test'
 const QUALITY = join(dirname(fileURLToPath(import.meta.url)), 'quality')
 
 /**
- * Baut ein react-ts-Projekt mit einer prettier-Attrappe und ohne Linter.
+ * Baut ein Projekt ohne Linter bzw. ohne PHPStan.
+ *
+ * react-ts: eine prettier-Attrappe, kein Linter.
+ * laravel: vendor mit einer pint-Attrappe, aber ohne phpstan. vendor muss
+ * vorhanden sein: ohne vendor ist der Schritt schon rot, nicht übersprungen.
  *
  * @param {object} [args]
  * @param {string} [args.required]  Zeile `required: …` der Komponente, leer heisst ohne
- * @param {boolean} [args.prettier]  liegt die prettier-Attrappe bereit?
+ * @param {boolean} [args.prettier]  liegt die prettier-Attrappe bereit? (nur react-ts)
+ * @param {'react-ts' | 'laravel'} [args.stack]
  */
-function projekt({ required = '', prettier = true } = {}) {
+function projekt({ required = '', prettier = true, stack = 'react-ts' } = {}) {
   const dir = realpathSync(mkdtempSync(join(tmpdir(), 'quality-required-')))
-  if (prettier) {
+  if (stack === 'laravel') {
+    writeFileSync(
+      join(dir, 'composer.json'),
+      JSON.stringify({ 'require-dev': { 'laravel/pint': '*' } }),
+    )
+    mkdirSync(join(dir, 'vendor', 'laravel', 'pint'), { recursive: true })
+    mkdirSync(join(dir, 'vendor', 'bin'), { recursive: true })
+    writeFileSync(join(dir, 'vendor', 'bin', 'pint'), '#!/bin/sh\nexit 0\n')
+    chmodSync(join(dir, 'vendor', 'bin', 'pint'), 0o755)
+  } else if (prettier) {
     mkdirSync(join(dir, 'node_modules', '.bin'), { recursive: true })
     writeFileSync(join(dir, 'node_modules', '.bin', 'prettier'), '#!/bin/sh\nexit 0\n')
     chmodSync(join(dir, 'node_modules', '.bin', 'prettier'), 0o755)
@@ -39,12 +53,13 @@ function projekt({ required = '', prettier = true } = {}) {
     'level: standard',
     'components:',
     '  - path: "."',
-    '    stack: react-ts',
+    `    stack: ${stack}`,
     ...(required ? [`    required: ${required}`] : []),
   ].join('\n')
   writeFileSync(join(dir, 'quality.yml'), `${yml}\n`)
-  writeFileSync(join(dir, '.gitignore'), 'node_modules/\n')
-  writeFileSync(join(dir, 'a.ts'), 'export const a = 1\n')
+  writeFileSync(join(dir, '.gitignore'), 'node_modules/\nvendor/\n')
+  if (stack === 'laravel') writeFileSync(join(dir, 'a.php'), '<?php\n')
+  else writeFileSync(join(dir, 'a.ts'), 'export const a = 1\n')
   for (const args of [
     ['init', '-q', '-b', 'main'],
     ['config', 'user.email', 'test@example.com'],
@@ -136,5 +151,26 @@ test('required mit einem Schritt, den der Stack nicht kennt, ist ein Konfigurati
     const { output, code } = quality(dir, ['task', '--only', 'fmt'])
     assert.equal(code, 2, output)
     assert.match(output, /required.*linting/)
+  })
+})
+
+test('laravel: ein übersprungener Pflichtschritt types ist rot und nennt den Grund', () => {
+  // Der laravel-Stack benennt den Schritt types nach dem Werkzeug: «phpstan».
+  mit({ stack: 'laravel', required: '[fmt, types, test]' }, (dir) => {
+    const { output, code } = quality(dir, ['task', '--only', 'fmt,types'])
+    assert.equal(code, 1, output)
+    assert.match(
+      output,
+      /✗ phpstan — Pflichtschritt übersprungen: Werkzeug "phpstan" nicht gefunden\. Installieren mit: {2}composer require --dev phpstan\/phpstan larastan\/larastan/,
+    )
+    assert.match(output, /1 von 2 Prüfungen fehlgeschlagen: phpstan$/m)
+  })
+})
+
+test('laravel: ohne required bleibt das fehlende phpstan grün', () => {
+  mit({ stack: 'laravel' }, (dir) => {
+    const { output, code } = quality(dir, ['task', '--only', 'fmt,types'])
+    assert.equal(code, 0, output)
+    assert.match(output, /1 Prüfung bestanden/)
   })
 })
