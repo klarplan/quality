@@ -12,7 +12,9 @@
  */
 
 import { isDeepStrictEqual } from 'node:util'
+import { LEVELS, validateConfig } from '../lib/config.mjs'
 import { parseToml } from '../lib/toml.mjs'
+import { parseYaml } from '../lib/yaml.mjs'
 
 /**
  * Eine hinzugefügte Zeile im Diff, mit ihrer Nummer im Zielzustand.
@@ -46,6 +48,8 @@ import { parseToml } from '../lib/toml.mjs'
  * @property {string | undefined} [renamedFrom] alter Pfad bei einer Umbenennung
  * @property {string[] | undefined} [gateFields] geänderte Gate-Felder eines
  *   Manifests, gesetzt von tamper-git.mjs über `manifestGateChanges`
+ * @property {boolean | undefined} [configOnlyTightens] quality.yml wird nur
+ *   geschärft, gesetzt von tamper-git.mjs über `configLoosenings`
  */
 
 /**
@@ -154,7 +158,10 @@ export const SOURCE_FILE = /\.(php|[cm]?[jt]sx?|vue|svelte|py)$/i
  * `harmless` beschreibt Zeilen, die das Gate nicht verschieben. Besteht die
  * Änderung nur aus solchen Zeilen, ist sie kein Fund.
  *
- * @type {{ pattern: RegExp, label: string, shrinkOnly?: boolean, botMayChange?: boolean, reportOnly?: boolean, harmless?: RegExp }[]}
+ * `tightenOnly` markiert quality.yml: eine Änderung, die das Gate nur schärft,
+ * ist kein Fund, im Tamper-Check wie im Hook. Siehe `configLoosenings`.
+ *
+ * @type {{ pattern: RegExp, label: string, shrinkOnly?: boolean, tightenOnly?: boolean, botMayChange?: boolean, reportOnly?: boolean, harmless?: RegExp }[]}
  */
 export const PROTECTED_PATHS = [
   // Der CI-Workflow steht zuerst: eine Datei wie .github/workflows/quality.yml
@@ -166,7 +173,7 @@ export const PROTECTED_PATHS = [
   { pattern: /(^|\/)phpstan-baseline\.neon$/, label: 'PHPStan-Baseline', shrinkOnly: true },
   { pattern: /(^|\/)\.?gitleaks[-.]baseline\.json$/, label: 'gitleaks-Baseline', shrinkOnly: true },
   { pattern: /(^|\/)eslint-suppressions\.json$/, label: 'ESLint-Suppressions', shrinkOnly: true },
-  { pattern: /^quality\.ya?ml$/, label: 'Quality-Konfiguration' },
+  { pattern: /^quality\.ya?ml$/, label: 'Quality-Konfiguration', tightenOnly: true },
   // phpstan.dist.neon liest der Stack genauso wie phpstan.neon(.dist).
   { pattern: /(^|\/)phpstan(\.dist)?\.neon(\.dist)?$/, label: 'PHPStan-Konfiguration' },
   { pattern: /(^|\/)pint\.json$/, label: 'Pint-Konfiguration' },
@@ -922,6 +929,153 @@ export function baselineOnlyShrinks(file) {
   return true
 }
 
+/** Schlüssel, die validateConfig liest. Alle anderen vergleicht der Check roh. */
+const CONFIG_KEYS = ['version', 'level', 'baseline', 'components', 'configs', 'tamper']
+const TAMPER_KEYS = ['ignore']
+const COMPONENT_KEYS = ['path', 'stack', 'php', 'phpstan_level', 'required', 'test_command']
+
+/**
+ * Die Werte unter Schlüsseln, die das Werkzeug nicht kennt.
+ *
+ * @param {unknown} value
+ * @param {string[]} known
+ * @returns {Record<string, unknown>}
+ */
+function unknownKeys(value, known) {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return {}
+  return Object.fromEntries(Object.entries(value).filter(([key]) => !known.includes(key)))
+}
+
+/**
+ * Vergleicht die unbekannten Schlüssel zweier Maps. Jede Abweichung ist eine
+ * Lockerung: eine spätere quality-Version könnte den Schlüssel lesen.
+ *
+ * @param {unknown} before
+ * @param {unknown} after
+ * @param {string[]} known
+ * @param {string} where
+ * @returns {string[]}
+ */
+function unknownKeyChanges(before, after, known, where) {
+  const a = unknownKeys(before, known)
+  const b = unknownKeys(after, known)
+  return [...new Set([...Object.keys(a), ...Object.keys(b)])]
+    .filter((key) => !isDeepStrictEqual(a[key], b[key]))
+    .map((key) => `${where}${key}: unbekannter Schlüssel geändert`)
+}
+
+/**
+ * Was eine Änderung an quality.yml lockert. Eine leere Liste heisst: die
+ * Änderung schärft das Gate nur oder ändert es gar nicht.
+ *
+ * Bei Baselines kennt der Hook keine Richtung, weil `quality prune` dort den
+ * richtigen Weg bietet. Für quality.yml gibt es kein solches Werkzeug. Beim
+ * Schärfen ist jede Wahl sicher: schlimmstenfalls wird das Gate rot, und das
+ * ist sichtbar. Darum gilt Schärfen hier nicht als Fund.
+ *
+ * Beide Fassungen laufen durch validateConfig. So zählt der effektive Wert,
+ * etwa das Standard-phpstan_level je Level. Kann eine Fassung nicht gelesen
+ * werden, gilt das als Lockerung. Die Regeln stehen in
+ * docs/superpowers/specs/2026-11-15-quality-yml-schaerfen-design.md.
+ *
+ * @param {string | null} before
+ * @param {string | null} after
+ * @returns {string[]}
+ */
+export function configLoosenings(before, after) {
+  // Ohne alten Stand gibt es keine Richtung. Eine neu angelegte Datei
+  // entscheidet der Mensch, wie bisher.
+  if (before === null) return ['quality.yml: neu angelegt, kein alter Stand zum Vergleich']
+  if (after === null) return ['quality.yml: entfernt']
+
+  /** @param {string} text @param {string} side */
+  const read = (text, side) => {
+    try {
+      const raw = parseYaml(text)
+      return { raw, config: validateConfig(raw, 'quality.yml') }
+    } catch (error) {
+      return { error: `quality.yml ${side} nicht lesbar: ${/** @type {Error} */ (error).message}` }
+    }
+  }
+  const a = read(before, 'vorher')
+  const b = read(after, 'nachher')
+  if (a.error || b.error) return [a.error, b.error].filter((text) => text !== undefined)
+  const old = /** @type {import('../lib/types.mjs').ValidConfig} */ (a.config)
+  const now = /** @type {import('../lib/types.mjs').ValidConfig} */ (b.config)
+  /** @type {any} */
+  const rawOld = a.raw
+  /** @type {any} */
+  const rawNow = b.raw
+
+  /** @type {string[]} */
+  const found = []
+  // `version` braucht keinen eigenen Vergleich: validateConfig kennt nur 1
+  // und wirft sonst, und das zählt oben als «nicht lesbar».
+  if (LEVELS.indexOf(now.level) < LEVELS.indexOf(old.level)) {
+    found.push(`level: ${old.level} → ${now.level}`)
+  }
+  if (!old.baseline && now.baseline) found.push('baseline: false → true')
+  for (const key of Object.keys(now.configs)) {
+    if (!(key in old.configs)) found.push(`configs.${key}: neu`)
+  }
+  for (const path of now.tamperIgnore) {
+    if (!old.tamperIgnore.includes(path)) found.push(`tamper.ignore: neuer Pfad ${path}`)
+  }
+
+  found.push(...unknownKeyChanges(rawOld, rawNow, CONFIG_KEYS, ''))
+  // Ist `tamper` keine Map, sieht unknownKeyChanges nichts. Dann zählt jede
+  // Abweichung, fail closed.
+  const isMap = (/** @type {unknown} */ value) =>
+    value === undefined || (value !== null && typeof value === 'object' && !Array.isArray(value))
+  if (!(isMap(rawOld.tamper) && isMap(rawNow.tamper))) {
+    if (!isDeepStrictEqual(rawOld.tamper, rawNow.tamper)) found.push('tamper: keine Map, geändert')
+  } else {
+    found.push(...unknownKeyChanges(rawOld.tamper, rawNow.tamper, TAMPER_KEYS, 'tamper.'))
+  }
+
+  for (const [index, component] of old.components.entries()) {
+    const label = `components[${component.path}]`
+    const nowIndex = now.components.findIndex(({ path }) => path === component.path)
+    const next = now.components[nowIndex]
+    if (!next) {
+      found.push(`${label}: Komponente entfernt`)
+      continue
+    }
+    for (const field of /** @type {const} */ (['stack', 'php', 'testCommand'])) {
+      if (component[field] !== next[field]) {
+        const name = field === 'testCommand' ? 'test_command' : field
+        found.push(`${label}.${name}: ${component[field]} → ${next[field]}`)
+      }
+    }
+    const dropped = component.required.filter((verb) => !next.required.includes(verb))
+    if (dropped.length > 0) found.push(`${label}.required: ${dropped.join(', ')} entfernt`)
+    if (next.phpstanLevel < component.phpstanLevel) {
+      found.push(`${label}.phpstan_level: ${component.phpstanLevel} → ${next.phpstanLevel}`)
+    }
+    found.push(
+      ...unknownKeyChanges(
+        rawOld.components[index],
+        rawNow.components[nowIndex],
+        COMPONENT_KEYS,
+        `${label}.`,
+      ),
+    )
+  }
+
+  // Eine neue Komponente prüft mehr. Sie darf aber keinen eigenen Testbefehl
+  // und keine unbekannten Schlüssel mitbringen: beides wäre bei einer
+  // bestehenden Komponente eine Lockerung (Review vom 15.11.2026).
+  for (const [index, component] of now.components.entries()) {
+    if (old.components.some(({ path }) => path === component.path)) continue
+    const label = `components[${component.path}]`
+    if (component.testCommand !== null) {
+      found.push(`${label}.test_command: neue Komponente mit eigenem Testbefehl`)
+    }
+    found.push(...unknownKeyChanges({}, rawNow.components[index], COMPONENT_KEYS, `${label}.`))
+  }
+  return found
+}
+
 /**
  * Besteht die Änderung nur aus Zeilen, die auf `harmless` passen?
  * Leerzeilen zählen nicht. Eine Änderung ohne Zeilen ist nicht harmlos: dann
@@ -970,8 +1124,12 @@ function onlyHarmlessLines(file, harmless) {
 export function analyseDiff(files, { botAuthor = false, ignorePaths = [] } = {}) {
   /** @type {Finding[]} */
   const findings = []
+  // quality.yml führt die Liste `tamper.ignore` selbst. Trüge sie sich dort
+  // ein, verschwände jede Lockerung aus der Prüfung (Review vom 15.11.2026).
+  const selfIgnoring = (/** @type {string} */ path) =>
+    PROTECTED_PATHS.some(({ pattern, tightenOnly }) => tightenOnly && pattern.test(path))
   const skipped = (/** @type {string} */ path) =>
-    ignorePaths.some((p) => path.startsWith(p)) || VENDOR_PATH.test(path)
+    (!selfIgnoring(path) && ignorePaths.some((p) => path.startsWith(p))) || VENDOR_PATH.test(path)
 
   for (const file of files) {
     // Eine Umbenennung hat zwei Pfade. Der alte entscheidet, ob die Datei zu
@@ -1035,13 +1193,23 @@ export function analyseDiff(files, { botAuthor = false, ignorePaths = [] } = {})
       })
     }
 
-    for (const { pattern, label, shrinkOnly, botMayChange, harmless } of PROTECTED_PATHS) {
+    for (const {
+      pattern,
+      label,
+      shrinkOnly,
+      tightenOnly,
+      botMayChange,
+      harmless,
+    } of PROTECTED_PATHS) {
       if (pattern.test(file.path)) {
         if (botAuthor && botMayChange) break
         if (harmless && onlyHarmlessLines(file, harmless)) break
         // Nur Baselines haben eine erwünschte Richtung. Schrumpft die Datei,
         // ist das kein Verschieben des Gates, sondern das Gegenteil.
         if (shrinkOnly && baselineOnlyShrinks(file)) break
+        // quality.yml hat ebenfalls eine Richtung: schärfen verschiebt das
+        // Gate nicht, sondern zieht es an.
+        if (tightenOnly && file.configOnlyTightens) break
         findings.push({
           rule: 'protected.changed',
           // Nachgestellt, damit die Meldung unabhängig vom Genus stimmt:
