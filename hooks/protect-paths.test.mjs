@@ -155,3 +155,18 @@ test('der Hook lässt ein Write durch, das schärft, und sperrt eines, das locke
 test('der Hook sperrt ein Write mit ungültiger Konfiguration', () => {
   assert.equal(configHook(CONFIG, 'Write', { content: 'components: []\n' }).decision, 'deny')
 })
+
+test('Review 6: der Hook rechnet auch bei CRLF-Zeilenenden', () => {
+  const crlf = CONFIG.replaceAll('\n', '\r\n')
+  const answer = configHook(crlf, 'Edit', {
+    old_string: "  - { path: '.', stack: laravel, required: [fmt] }\nfoo",
+    new_string: 'x',
+  })
+  // old_string fehlt auch normalisiert: weiter gesperrt.
+  assert.equal(answer.decision, 'deny')
+  const tighter = configHook(crlf, 'Edit', {
+    old_string: 'level: standard\ncomponents:',
+    new_string: 'level: strict\ncomponents:',
+  })
+  assert.equal(tighter.decision, 'allow')
+})

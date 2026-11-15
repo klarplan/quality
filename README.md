@@ -458,9 +458,9 @@ erfüllt:
 Alles andere an diesen Dateien bleibt gemeldet: ein hinzugefügter Eintrag, ein
 angehobener Zähler, eine neu angelegte Baseline. Die übrigen geschützten Pfade
 — CI-Workflow, `phpstan.neon`, Linter-Konfiguration — bleiben unverändert
-streng. Für `quality.yml` gilt seit dem 15.11.2026 eine eigene Regel, siehe
-unten. Dort gibt es keine erwünschte Richtung: eine entfernte
-Zeile kann auch eine Prüfung abschalten.
+streng. Bei diesen Dateien gibt es keine erwünschte Richtung: eine entfernte
+Zeile kann auch eine Prüfung abschalten. Für `quality.yml` gilt eine eigene Regel, siehe
+«quality.yml: schärfen ist kein Fund».
 
 Die Grenze offen benannt: der Vergleich ist wörtlich. Wird eine Baseline
 umformatiert — Tabs zu Leerzeichen, andere Anführungszeichen — gilt jede Zeile
@@ -485,21 +485,23 @@ Hook und Tamper-Check fragen dieselbe Funktion, `configLoosenings` in
 `guards/tamper.mjs`. Sie liest beide Fassungen über `validateConfig` und
 vergleicht die effektiven Werte:
 
-| Feld                           | Schärfen (kein Fund)              | Sonst Fund            |
-| ------------------------------ | --------------------------------- | --------------------- |
-| `version`                      | gleich                            | anders                |
-| `level`                        | gleich oder `standard` → `strict` | `strict` → `standard` |
-| `baseline`                     | gleich oder `true` → `false`      | `false` → `true`      |
-| `configs`                      | Einträge entfernt                 | Eintrag hinzugefügt   |
-| `tamper.ignore`                | Teilmenge des alten               | neuer Pfad            |
-| Komponente (Schlüssel `path`)  | hinzugefügt                       | entfernt              |
-| `stack`, `php`, `test_command` | gleich                            | geändert              |
-| `required`                     | Obermenge des alten               | Schritt entfernt      |
-| `phpstan_level` (effektiv)     | gleich oder höher                 | niedriger             |
-| unbekannte Schlüssel           | gleich                            | geändert              |
+| Feld                           | Schärfen (kein Fund)                                      | Sonst Fund                            |
+| ------------------------------ | --------------------------------------------------------- | ------------------------------------- |
+| `version`                      | gleich                                                    | anders                                |
+| `level`                        | gleich oder `standard` → `strict`                         | `strict` → `standard`                 |
+| `baseline`                     | gleich oder `true` → `false`                              | `false` → `true`                      |
+| `configs`                      | Einträge entfernt                                         | Eintrag hinzugefügt                   |
+| `tamper.ignore`                | Teilmenge des alten                                       | neuer Pfad                            |
+| Komponente (Schlüssel `path`)  | hinzugefügt, ohne `test_command` und unbekannte Schlüssel | entfernt, oder neu mit `test_command` |
+| `stack`, `php`, `test_command` | gleich                                                    | geändert                              |
+| `required`                     | Obermenge des alten                                       | Schritt entfernt                      |
+| `phpstan_level` (effektiv)     | gleich oder höher                                         | niedriger                             |
+| unbekannte Schlüssel           | gleich                                                    | geändert                              |
 
-Eine Fassung, die sich nicht lesen lässt, gilt als Lockerung. Umbenennen und
-Löschen bleiben Fund. Kommentare und Formatierung ändern nichts.
+Eine Fassung, die sich nicht lesen lässt, gilt als Lockerung. Umbenennen,
+Neuanlegen und Löschen bleiben Fund. Kommentare und Formatierung ändern
+nichts. `quality.yml` kann sich nicht selbst über `tamper.ignore` aus der
+Prüfung nehmen.
 
 Anders als bei den Baselines kennt hier auch der Hook die Richtung. Für
 `quality.yml` gibt es kein Werkzeug wie `quality prune`. Beim Schärfen ist

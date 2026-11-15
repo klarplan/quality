@@ -287,6 +287,23 @@ function markConfigTightening(files, root, before, after) {
 }
 
 /**
+ * Wendet alle Markierer an, die beide Fassungen einer Datei vergleichen. Eine
+ * Stelle für beide Modi: ein neuer Markierer gilt so mit und ohne `base`.
+ *
+ * @param {DiffFile[]} files
+ * @param {string} root
+ * @param {string} before
+ * @param {string | null} after
+ * @returns {DiffFile[]}
+ */
+function markFiles(files, root, before, after) {
+  return [markOwnVersionBumps, markGateFields, markConfigTightening].reduce(
+    (marked, mark) => mark(marked, root, before, after),
+    files,
+  )
+}
+
+/**
  * Trägt der Merge-Commit eine eigene Änderung?
  *
  * `git show --remerge-diff` vergleicht den Merge-Commit mit dem Ergebnis,
@@ -581,17 +598,7 @@ export function runTamper({
   if (base) {
     const mergeBase = mergeBaseOf(base, root)
     const diffText = git([...DIFF, mergeBase, 'HEAD'], root)
-    const files = markConfigTightening(
-      markGateFields(
-        markOwnVersionBumps(parseDiff(diffText), root, mergeBase, 'HEAD'),
-        root,
-        mergeBase,
-        'HEAD',
-      ),
-      root,
-      mergeBase,
-      'HEAD',
-    )
+    const files = markFiles(parseDiff(diffText), root, mergeBase, 'HEAD')
     branchFindings = analyseDiff(files, { botAuthor, ignorePaths })
   }
 
@@ -601,17 +608,7 @@ export function runTamper({
     const diffText = committed ? git([...DIFF, 'HEAD'], root) : ''
     // `git diff` kennt neu angelegte, noch nicht erfasste Dateien nicht.
     worktreeFiles = [
-      ...markConfigTightening(
-        markGateFields(
-          markOwnVersionBumps(parseDiff(diffText), root, 'HEAD', null),
-          root,
-          'HEAD',
-          null,
-        ),
-        root,
-        'HEAD',
-        null,
-      ),
+      ...markFiles(parseDiff(diffText), root, 'HEAD', null),
       ...untrackedAsAdded(root, { includeCached: !committed }),
     ]
   }

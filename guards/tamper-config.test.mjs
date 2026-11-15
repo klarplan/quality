@@ -122,6 +122,25 @@ test('Komponente hinzufügen schärft, entfernen lockert', () => {
   assert.match(configLoosenings(two, BASE).join('\n'), /frontend/)
 })
 
+test('Review 1: eine neue Komponente mit test_command lockert', () => {
+  const two = `${BASE}  - { path: app, stack: laravel, test_command: 'true' }\n`
+  assert.match(configLoosenings(BASE, two).join('\n'), /components\[app\]\.test_command/)
+})
+
+test('Review 1: eine neue Komponente mit unbekanntem Schlüssel lockert', () => {
+  const two = `${BASE}  - { path: app, stack: laravel, skip_tests: true }\n`
+  assert.match(configLoosenings(BASE, two).join('\n'), /components\[app\]\.skip_tests/)
+})
+
+test('Review 3: tamper als Skalar lockert, fail closed', () => {
+  const before = variant('tamper:\n  ignore:\n    - examples/\n', '')
+  assert.match(configLoosenings(before, `${before}tamper: off\n`).join('\n'), /tamper/)
+})
+
+test('Review 5: ohne alten Stand nennt die Meldung die neue Datei, keine Lockerung', () => {
+  assert.match(configLoosenings(null, BASE).join('\n'), /neu angelegt/)
+})
+
 /** @type {[string, string, string][]} */
 const CHANGED_FIELDS = [
   ['stack', 'stack: laravel', 'stack: php'],
@@ -174,8 +193,9 @@ test('mehrere Lockerungen werden einzeln genannt', () => {
  * @param {string} before
  * @param {string} after
  * @param {string} [message]
+ * @param {string[]} [ignorePaths] wie bin/quality.mjs sie aus der geprüften quality.yml liest
  */
-function exitFor(before, after, message = 'nachher') {
+function exitFor(before, after, message = 'nachher', ignorePaths = []) {
   const root = mkdtempSync(join(tmpdir(), 'quality-config-'))
   try {
     const git = (/** @type {string[]} */ ...args) =>
@@ -189,7 +209,7 @@ function exitFor(before, after, message = 'nachher') {
     writeFileSync(join(root, 'quality.yml'), after)
     git('add', '.')
     git('commit', '--quiet', '-m', message)
-    return runTamper({ root, base: 'HEAD~1', quiet: true })
+    return runTamper({ root, base: 'HEAD~1', quiet: true, ignorePaths })
   } finally {
     rmSync(root, { recursive: true, force: true })
   }
@@ -210,4 +230,9 @@ test('echter Diff: quality.yml lockern mit Trailer eines Menschen ist grün', ()
     exitFor(TIGHTER, BASE, 'nachher\n\nQuality-Exception(protected.changed): Ticket #1'),
     0,
   )
+})
+
+test('Review 2: quality.yml, die sich selbst in tamper.ignore einträgt, bleibt ein Fund', () => {
+  const self = TIGHTER.replace('    - examples/\n', '    - examples/\n    - quality.yml\n')
+  assert.equal(exitFor(TIGHTER, self, 'nachher', ['examples/', 'quality.yml']), 1)
 })

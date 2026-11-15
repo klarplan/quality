@@ -898,7 +898,10 @@ function unknownKeyChanges(before, after, known, where) {
  * @returns {string[]}
  */
 export function configLoosenings(before, after) {
-  if (before === null || after === null) return ['quality.yml: eine Fassung fehlt']
+  // Ohne alten Stand gibt es keine Richtung. Eine neu angelegte Datei
+  // entscheidet der Mensch, wie bisher.
+  if (before === null) return ['quality.yml: neu angelegt, kein alter Stand zum Vergleich']
+  if (after === null) return ['quality.yml: entfernt']
 
   /** @param {string} text @param {string} side */
   const read = (text, side) => {
@@ -921,7 +924,8 @@ export function configLoosenings(before, after) {
 
   /** @type {string[]} */
   const found = []
-  if (old.version !== now.version) found.push(`version: ${old.version} → ${now.version}`)
+  // `version` braucht keinen eigenen Vergleich: validateConfig kennt nur 1
+  // und wirft sonst, und das zählt oben als «nicht lesbar».
   if (LEVELS.indexOf(now.level) < LEVELS.indexOf(old.level)) {
     found.push(`level: ${old.level} → ${now.level}`)
   }
@@ -934,7 +938,15 @@ export function configLoosenings(before, after) {
   }
 
   found.push(...unknownKeyChanges(rawOld, rawNow, CONFIG_KEYS, ''))
-  found.push(...unknownKeyChanges(rawOld?.tamper, rawNow?.tamper, TAMPER_KEYS, 'tamper.'))
+  // Ist `tamper` keine Map, sieht unknownKeyChanges nichts. Dann zählt jede
+  // Abweichung, fail closed.
+  const isMap = (/** @type {unknown} */ value) =>
+    value === undefined || (value !== null && typeof value === 'object' && !Array.isArray(value))
+  if (!(isMap(rawOld.tamper) && isMap(rawNow.tamper))) {
+    if (!isDeepStrictEqual(rawOld.tamper, rawNow.tamper)) found.push('tamper: keine Map, geändert')
+  } else {
+    found.push(...unknownKeyChanges(rawOld.tamper, rawNow.tamper, TAMPER_KEYS, 'tamper.'))
+  }
 
   for (const [index, component] of old.components.entries()) {
     const label = `components[${component.path}]`
@@ -963,6 +975,18 @@ export function configLoosenings(before, after) {
         `${label}.`,
       ),
     )
+  }
+
+  // Eine neue Komponente prüft mehr. Sie darf aber keinen eigenen Testbefehl
+  // und keine unbekannten Schlüssel mitbringen: beides wäre bei einer
+  // bestehenden Komponente eine Lockerung (Review vom 15.11.2026).
+  for (const [index, component] of now.components.entries()) {
+    if (old.components.some(({ path }) => path === component.path)) continue
+    const label = `components[${component.path}]`
+    if (component.testCommand !== null) {
+      found.push(`${label}.test_command: neue Komponente mit eigenem Testbefehl`)
+    }
+    found.push(...unknownKeyChanges({}, rawNow.components[index], COMPONENT_KEYS, `${label}.`))
   }
   return found
 }
@@ -1015,8 +1039,12 @@ function onlyHarmlessLines(file, harmless) {
 export function analyseDiff(files, { botAuthor = false, ignorePaths = [] } = {}) {
   /** @type {Finding[]} */
   const findings = []
+  // quality.yml führt die Liste `tamper.ignore` selbst. Trüge sie sich dort
+  // ein, verschwände jede Lockerung aus der Prüfung (Review vom 15.11.2026).
+  const selfIgnoring = (/** @type {string} */ path) =>
+    PROTECTED_PATHS.some(({ pattern, tightenOnly }) => tightenOnly && pattern.test(path))
   const skipped = (/** @type {string} */ path) =>
-    ignorePaths.some((p) => path.startsWith(p)) || VENDOR_PATH.test(path)
+    (!selfIgnoring(path) && ignorePaths.some((p) => path.startsWith(p))) || VENDOR_PATH.test(path)
 
   for (const file of files) {
     // Eine Umbenennung hat zwei Pfade. Der alte entscheidet, ob die Datei zu

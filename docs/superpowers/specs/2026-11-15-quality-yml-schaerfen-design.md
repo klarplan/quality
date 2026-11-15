@@ -45,18 +45,18 @@ Lockerungen. Eine leere Liste heisst: schärft nur oder ändert nichts. Beide
 Fassungen laufen durch `parseYaml` und `validateConfig`. So zählt der
 effektive Wert, etwa das Standard-`phpstan_level` je Level.
 
-| Feld                           | Schärfen (kein Fund)              | Sonst Lockerung       |
-| ------------------------------ | --------------------------------- | --------------------- |
-| `version`                      | gleich                            | anders                |
-| `level`                        | gleich oder `standard` → `strict` | `strict` → `standard` |
-| `baseline`                     | gleich oder `true` → `false`      | `false` → `true`      |
-| `configs`                      | Einträge entfernt                 | Eintrag hinzugefügt   |
-| `tamper.ignore`                | Teilmenge des alten               | neuer Pfad            |
-| Komponente (Schlüssel `path`)  | hinzugefügt                       | entfernt              |
-| `stack`, `php`, `test_command` | gleich                            | geändert              |
-| `required`                     | Obermenge des alten               | Schritt entfernt      |
-| `phpstan_level` (effektiv)     | gleich oder höher                 | niedriger             |
-| unbekannte Schlüssel (roh)     | gleich                            | geändert              |
+| Feld                           | Schärfen (kein Fund)                                      | Sonst Lockerung                       |
+| ------------------------------ | --------------------------------------------------------- | ------------------------------------- |
+| `version`                      | gleich                                                    | anders                                |
+| `level`                        | gleich oder `standard` → `strict`                         | `strict` → `standard`                 |
+| `baseline`                     | gleich oder `true` → `false`                              | `false` → `true`                      |
+| `configs`                      | Einträge entfernt                                         | Eintrag hinzugefügt                   |
+| `tamper.ignore`                | Teilmenge des alten                                       | neuer Pfad                            |
+| Komponente (Schlüssel `path`)  | hinzugefügt, ohne `test_command` und unbekannte Schlüssel | entfernt, oder neu mit `test_command` |
+| `stack`, `php`, `test_command` | gleich                                                    | geändert                              |
+| `required`                     | Obermenge des alten                                       | Schritt entfernt                      |
+| `phpstan_level` (effektiv)     | gleich oder höher                                         | niedriger                             |
+| unbekannte Schlüssel (roh)     | gleich                                                    | geändert                              |
 
 Ist eine Fassung nicht lesbar oder ungültig, gilt das als Lockerung. Kommentare
 und Formatierung ändern das Ergebnis nicht.

@@ -65,41 +65,44 @@ if (!hit) process.exit(0)
  * Der Inhalt der Datei nach dem Aufruf, oder null, wenn er sich nicht sicher
  * ausrechnen lässt. Dann sperrt der Hook wie bei jeder anderen Datei.
  *
- * @param {string} path
+ * Edit gleicht old_string auch bei CRLF-Zeilenenden ab. Darum rechnet der Hook
+ * mit LF. Für YAML ändert das nichts an der Bedeutung. Andere Normalisierungen
+ * von Edit, etwa bei Anführungszeichen, bildet er nicht nach: dann sperrt er.
+ *
+ * @param {string | null} current der Inhalt vor dem Aufruf
  * @returns {string | null}
  */
-function contentAfter(path) {
+function contentAfter(current) {
   const toolInput = input.tool_input
   if (input.tool_name === 'Write') {
     return typeof toolInput.content === 'string' ? toolInput.content : null
   }
-  if (input.tool_name !== 'Edit') return null
-  const { old_string: from, new_string: to, replace_all: all } = toolInput
-  if (typeof from !== 'string' || typeof to !== 'string' || from === '') return null
-  let current
-  try {
-    current = readFileSync(path, 'utf8')
-  } catch {
-    return null
-  }
-  const count = current.split(from).length - 1
+  if (input.tool_name !== 'Edit' || current === null) return null
+  const { old_string: rawFrom, new_string: rawTo, replace_all: all } = toolInput
+  if (typeof rawFrom !== 'string' || typeof rawTo !== 'string' || rawFrom === '') return null
+  const lf = (/** @type {string} */ text) => text.replaceAll('\r\n', '\n')
+  const text = lf(current)
+  const from = lf(rawFrom)
+  const to = lf(rawTo)
+  const count = text.split(from).length - 1
   // Wie Edit selbst: ohne replace_all muss old_string eindeutig sein.
   if (count === 0 || (count > 1 && all !== true)) return null
-  return all === true ? current.split(from).join(to) : current.replace(from, () => to)
+  return all === true ? text.split(from).join(to) : text.replace(from, () => to)
 }
 
 /** @type {string[]} */
 let loosenings = []
 if (hit.tightenOnly) {
+  // Einmal lesen: vorher und nachher stammen so aus demselben Stand.
   let before = null
   try {
     before = readFileSync(filePath, 'utf8')
   } catch {
     before = null
   }
-  const after = contentAfter(filePath)
+  const after = contentAfter(before)
   if (after !== null) {
-    loosenings = configLoosenings(before, after)
+    loosenings = configLoosenings(before === null ? null : before.replaceAll('\r\n', '\n'), after)
     if (loosenings.length === 0) process.exit(0)
   }
 }
@@ -111,7 +114,7 @@ const tightenWay =
   `Schärfen darfst du: required ergänzen, phpstan_level erhöhen, level auf strict, ` +
   `baseline auf false, tamper.ignore kürzen, eine Komponente hinzufügen.\n` +
   (loosenings.length > 0
-    ? `Diese Änderung lockert das Gate:\n${loosenings.map((line) => `  - ${line}`).join('\n')}\n\n`
+    ? `Diese Änderung schärft nicht nur:\n${loosenings.map((line) => `  - ${line}`).join('\n')}\n\n`
     : `Den Inhalt nach dieser Änderung konnte ich nicht sicher ausrechnen.\n\n`) +
   `Lockern entscheidet der Mensch. Beschreibe ihm, was du ändern möchtest und warum. ` +
   `Nutze keinen Umweg über die Shell.`
