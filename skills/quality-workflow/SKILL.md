@@ -65,7 +65,8 @@ beim Push auf `main`.
   Eine Baseline SCHRUMPFEN darfst du dagegen — und sollst du auch, siehe unten.
 - **Keine Quality-Konfiguration anfassen.** `quality.yml`, `phpstan.neon`,
   Linter- und Formatter-Konfiguration, CI-Workflows und Hook-Einstellungen
-  ändert der Mensch, nicht du.
+  ändert der Mensch, nicht du. `quality.yml` SCHÄRFEN darfst du dagegen,
+  siehe unten.
 - **Den Ausnahme-Trailer setzt du nie selbst.** `Quality-Exception:` ist
   ausdrücklich Menschen vorbehalten. Der Trailer existiert, damit eine bewusste
   Ausnahme sichtbar wird — wenn du ihn selbst setzt, ist er wertlos.
@@ -75,7 +76,7 @@ beim Push auf `main`.
 
 ## Die Baseline schrumpfen: `quality prune`
 
-Das ist die eine Ausnahme in der Liste oben, und sie ist ausdrücklich gewollt.
+Das ist die erste Ausnahme in der Liste oben, und sie ist ausdrücklich gewollt.
 
 Verbesserst du Code, werden Baseline-Einträge wertlos. PHPStan meldet sie dann
 als `ignore.unmatched`, und der Lauf wird rot, obwohl kein echter Fehler offen
@@ -100,6 +101,21 @@ Drei Dinge dazu:
 
 Meldet das Kommando eine unerfüllte Ausnahme AUSSERHALB der Baseline, steht sie
 in der `phpstan.neon`. Die fasst du nicht an; sag es dem Menschen.
+
+## quality.yml schärfen
+
+Die zweite Ausnahme. Schärfen heisst: `required` ergänzen, `phpstan_level`
+erhöhen, `level` auf `strict`, `baseline` auf `false`, `tamper.ignore` kürzen,
+eine Komponente hinzufügen.
+
+- **Editiere die Datei direkt.** Der Hook rechnet den Inhalt nach deinem Edit
+  aus und lässt ihn durch, wenn er nur schärft.
+- **Du brauchst dafür keine Ausnahme.** Der Tamper-Check bewertet die Änderung
+  nach derselben Regel. Setze keinen Trailer.
+- **Mach eine Schärfung, die der Mensch will.** Ein neuer Pflichtschritt kann
+  das Gate rot machen. Kläre das vorher.
+- **Lockern bleibt beim Menschen.** Lehnt der Hook ab, nennt er jede Lockerung.
+  Beschreibe sie dem Menschen. Umgehe den Hook nicht über die Shell.
 
 ## Wenn du an eine dieser Grenzen stösst
 

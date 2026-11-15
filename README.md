@@ -457,8 +457,9 @@ erfüllt:
 
 Alles andere an diesen Dateien bleibt gemeldet: ein hinzugefügter Eintrag, ein
 angehobener Zähler, eine neu angelegte Baseline. Die übrigen geschützten Pfade
-— CI-Workflow, `quality.yml`, `phpstan.neon`, Linter-Konfiguration — bleiben
-unverändert streng. Dort gibt es keine erwünschte Richtung: eine entfernte
+— CI-Workflow, `phpstan.neon`, Linter-Konfiguration — bleiben unverändert
+streng. Für `quality.yml` gilt seit dem 15.11.2026 eine eigene Regel, siehe
+unten. Dort gibt es keine erwünschte Richtung: eine entfernte
 Zeile kann auch eine Prüfung abschalten.
 
 Die Grenze offen benannt: der Vergleich ist wörtlich. Wird eine Baseline
@@ -472,6 +473,38 @@ jede Änderung an einer Baseline weiter ab, nennt in der Begründung aber
 Analysator fragt, welche Einträge tot sind. Ein Hand-Edit kann das nicht
 zusichern — «entfernt nur» heisst nicht «entfernt die richtigen». Ein
 richtungsabhängiger Hook wäre ein zweiter, ungeprüfter Weg an derselben Datei.
+
+### quality.yml: schärfen ist kein Fund
+
+Eine Änderung an `quality.yml`, die das Gate nur schärft, ist kein
+`protected.changed`. Der Hook lässt sie durch, und der Commit braucht keinen
+Trailer. Anlass: Ein Agent sollte mit Renés OK `required` ergänzen und kam an
+keiner der drei Sperren vorbei.
+
+Hook und Tamper-Check fragen dieselbe Funktion, `configLoosenings` in
+`guards/tamper.mjs`. Sie liest beide Fassungen über `validateConfig` und
+vergleicht die effektiven Werte:
+
+| Feld                           | Schärfen (kein Fund)              | Sonst Fund            |
+| ------------------------------ | --------------------------------- | --------------------- |
+| `version`                      | gleich                            | anders                |
+| `level`                        | gleich oder `standard` → `strict` | `strict` → `standard` |
+| `baseline`                     | gleich oder `true` → `false`      | `false` → `true`      |
+| `configs`                      | Einträge entfernt                 | Eintrag hinzugefügt   |
+| `tamper.ignore`                | Teilmenge des alten               | neuer Pfad            |
+| Komponente (Schlüssel `path`)  | hinzugefügt                       | entfernt              |
+| `stack`, `php`, `test_command` | gleich                            | geändert              |
+| `required`                     | Obermenge des alten               | Schritt entfernt      |
+| `phpstan_level` (effektiv)     | gleich oder höher                 | niedriger             |
+| unbekannte Schlüssel           | gleich                            | geändert              |
+
+Eine Fassung, die sich nicht lesen lässt, gilt als Lockerung. Umbenennen und
+Löschen bleiben Fund. Kommentare und Formatierung ändern nichts.
+
+Anders als bei den Baselines kennt hier auch der Hook die Richtung. Für
+`quality.yml` gibt es kein Werkzeug wie `quality prune`. Beim Schärfen ist
+zudem jede Wahl sicher: schlimmstenfalls wird das Gate rot, und das sieht man.
+Lockern entscheidet weiter der Mensch, mit `Quality-Exception(protected.changed):`.
 
 Lokal (`quality tamper`) wird der uncommittete Stand geprüft, inklusive noch
 nicht erfasster Dateien. In CI kommt der Vergleichsstand aus `--base`.
