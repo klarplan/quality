@@ -930,7 +930,7 @@ export function baselineOnlyShrinks(file) {
 }
 
 /** Schlüssel, die validateConfig liest. Alle anderen vergleicht der Check roh. */
-const CONFIG_KEYS = ['version', 'level', 'baseline', 'components', 'configs', 'tamper']
+const CONFIG_KEYS = ['version', 'level', 'baseline', 'components', 'configs', 'exclude', 'tamper']
 const TAMPER_KEYS = ['ignore']
 const COMPONENT_KEYS = ['path', 'stack', 'php', 'phpstan_level', 'required', 'test_command']
 
@@ -1017,6 +1017,11 @@ export function configLoosenings(before, after) {
   if (!old.baseline && now.baseline) found.push('baseline: false → true')
   for (const key of Object.keys(now.configs)) {
     if (!(key in old.configs)) found.push(`configs.${key}: neu`)
+  }
+  // Ein Ausschluss stellt wie configs: own einen Hinweis des Audits ab. Der
+  // Grund darf sich ändern, ein neuer Pfad braucht den Trailer.
+  for (const { path } of now.exclude) {
+    if (!old.exclude.some((entry) => entry.path === path)) found.push(`exclude: neuer Pfad ${path}`)
   }
   for (const path of now.tamperIgnore) {
     if (!old.tamperIgnore.includes(path)) found.push(`tamper.ignore: neuer Pfad ${path}`)

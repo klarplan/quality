@@ -236,3 +236,23 @@ test('Review 2: quality.yml, die sich selbst in tamper.ignore einträgt, bleibt 
   const self = TIGHTER.replace('    - examples/\n', '    - examples/\n    - quality.yml\n')
   assert.equal(exitFor(TIGHTER, self, 'nachher', ['examples/', 'quality.yml']), 1)
 })
+
+test('exclude: einen Pfad hinzufügen lockert, entfernen schärft', () => {
+  // Wie configs: own stellt ein Ausschluss einen Hinweis des Audits dauerhaft
+  // ab. Darum braucht er den Trailer eines Menschen (René, 15.11.2026).
+  const one = `${BASE}exclude:\n  - { path: tools/x, reason: Nur Manifest }\n`
+  assert.match(configLoosenings(BASE, one).join('\n'), /exclude: neuer Pfad tools\/x/)
+  assert.deepEqual(configLoosenings(one, BASE), [])
+})
+
+test('exclude: den Grund ändern lockert nicht', () => {
+  const before = `${BASE}exclude:\n  - { path: tools/x, reason: Nur Manifest }\n`
+  const after = `${BASE}exclude:\n  - { path: tools/x, reason: 'Nur Manifest, kein Code' }\n`
+  assert.deepEqual(configLoosenings(before, after), [])
+})
+
+test('exclude: derselbe Pfad anders geschrieben lockert nicht', () => {
+  const before = `${BASE}exclude:\n  - { path: tools/x, reason: a }\n`
+  const after = `${BASE}exclude:\n  - { path: ./tools/x/, reason: a }\n`
+  assert.deepEqual(configLoosenings(before, after), [])
+})
