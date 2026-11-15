@@ -12,6 +12,8 @@
  */
 
 import { isDeepStrictEqual } from 'node:util'
+import { LEVELS, validateConfig } from '../lib/config.mjs'
+import { parseYaml } from '../lib/yaml.mjs'
 
 /**
  * Eine hinzugefügte Zeile im Diff, mit ihrer Nummer im Zielzustand.
@@ -835,6 +837,129 @@ export function baselineOnlyShrinks(file) {
   }
 
   return true
+}
+
+/** Schlüssel, die validateConfig liest. Alle anderen vergleicht der Check roh. */
+const CONFIG_KEYS = ['version', 'level', 'baseline', 'components', 'configs', 'tamper']
+const TAMPER_KEYS = ['ignore']
+const COMPONENT_KEYS = ['path', 'stack', 'php', 'phpstan_level', 'required', 'test_command']
+
+/**
+ * Die Werte unter Schlüsseln, die das Werkzeug nicht kennt.
+ *
+ * @param {unknown} value
+ * @param {string[]} known
+ * @returns {Record<string, unknown>}
+ */
+function unknownKeys(value, known) {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return {}
+  return Object.fromEntries(Object.entries(value).filter(([key]) => !known.includes(key)))
+}
+
+/**
+ * Vergleicht die unbekannten Schlüssel zweier Maps. Jede Abweichung ist eine
+ * Lockerung: eine spätere quality-Version könnte den Schlüssel lesen.
+ *
+ * @param {unknown} before
+ * @param {unknown} after
+ * @param {string[]} known
+ * @param {string} where
+ * @returns {string[]}
+ */
+function unknownKeyChanges(before, after, known, where) {
+  const a = unknownKeys(before, known)
+  const b = unknownKeys(after, known)
+  return [...new Set([...Object.keys(a), ...Object.keys(b)])]
+    .filter((key) => !isDeepStrictEqual(a[key], b[key]))
+    .map((key) => `${where}${key}: unbekannter Schlüssel geändert`)
+}
+
+/**
+ * Was eine Änderung an quality.yml lockert. Eine leere Liste heisst: die
+ * Änderung schärft das Gate nur oder ändert es gar nicht.
+ *
+ * Bei Baselines kennt der Hook keine Richtung, weil `quality prune` dort den
+ * richtigen Weg bietet. Für quality.yml gibt es kein solches Werkzeug. Beim
+ * Schärfen ist jede Wahl sicher: schlimmstenfalls wird das Gate rot, und das
+ * ist sichtbar. Darum gilt Schärfen hier nicht als Fund.
+ *
+ * Beide Fassungen laufen durch validateConfig. So zählt der effektive Wert,
+ * etwa das Standard-phpstan_level je Level. Kann eine Fassung nicht gelesen
+ * werden, gilt das als Lockerung. Die Regeln stehen in
+ * docs/superpowers/specs/2026-11-15-quality-yml-schaerfen-design.md.
+ *
+ * @param {string | null} before
+ * @param {string | null} after
+ * @returns {string[]}
+ */
+export function configLoosenings(before, after) {
+  if (before === null || after === null) return ['quality.yml: eine Fassung fehlt']
+
+  /** @param {string} text @param {string} side */
+  const read = (text, side) => {
+    try {
+      const raw = parseYaml(text)
+      return { raw, config: validateConfig(raw, 'quality.yml') }
+    } catch (error) {
+      return { error: `quality.yml ${side} nicht lesbar: ${/** @type {Error} */ (error).message}` }
+    }
+  }
+  const a = read(before, 'vorher')
+  const b = read(after, 'nachher')
+  if (a.error || b.error) return [a.error, b.error].filter((text) => text !== undefined)
+  const old = /** @type {import('../lib/types.mjs').ValidConfig} */ (a.config)
+  const now = /** @type {import('../lib/types.mjs').ValidConfig} */ (b.config)
+  /** @type {any} */
+  const rawOld = a.raw
+  /** @type {any} */
+  const rawNow = b.raw
+
+  /** @type {string[]} */
+  const found = []
+  if (old.version !== now.version) found.push(`version: ${old.version} → ${now.version}`)
+  if (LEVELS.indexOf(now.level) < LEVELS.indexOf(old.level)) {
+    found.push(`level: ${old.level} → ${now.level}`)
+  }
+  if (!old.baseline && now.baseline) found.push('baseline: false → true')
+  for (const key of Object.keys(now.configs)) {
+    if (!(key in old.configs)) found.push(`configs.${key}: neu`)
+  }
+  for (const path of now.tamperIgnore) {
+    if (!old.tamperIgnore.includes(path)) found.push(`tamper.ignore: neuer Pfad ${path}`)
+  }
+
+  found.push(...unknownKeyChanges(rawOld, rawNow, CONFIG_KEYS, ''))
+  found.push(...unknownKeyChanges(rawOld?.tamper, rawNow?.tamper, TAMPER_KEYS, 'tamper.'))
+
+  for (const [index, component] of old.components.entries()) {
+    const label = `components[${component.path}]`
+    const nowIndex = now.components.findIndex(({ path }) => path === component.path)
+    const next = now.components[nowIndex]
+    if (!next) {
+      found.push(`${label}: Komponente entfernt`)
+      continue
+    }
+    for (const field of /** @type {const} */ (['stack', 'php', 'testCommand'])) {
+      if (component[field] !== next[field]) {
+        const name = field === 'testCommand' ? 'test_command' : field
+        found.push(`${label}.${name}: ${component[field]} → ${next[field]}`)
+      }
+    }
+    const dropped = component.required.filter((verb) => !next.required.includes(verb))
+    if (dropped.length > 0) found.push(`${label}.required: ${dropped.join(', ')} entfernt`)
+    if (next.phpstanLevel < component.phpstanLevel) {
+      found.push(`${label}.phpstan_level: ${component.phpstanLevel} → ${next.phpstanLevel}`)
+    }
+    found.push(
+      ...unknownKeyChanges(
+        rawOld.components[index],
+        rawNow.components[nowIndex],
+        COMPONENT_KEYS,
+        `${label}.`,
+      ),
+    )
+  }
+  return found
 }
 
 /**
