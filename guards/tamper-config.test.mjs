@@ -321,3 +321,48 @@ test('exclude: derselbe Pfad anders geschrieben lockert nicht', () => {
   const after = `${BASE}exclude:\n  - { path: ./tools/x/, reason: a }\n`
   assert.deepEqual(configLoosenings(before, after), [])
 })
+
+// Befund 15.11.2026: der Tamper-Check verglich den path einer Komponente als
+// rohe Zeichenkette. Gleich gilt, was der Runner gleich behandelt:
+// filesForComponent in lib/files.mjs.
+const APP = `version: 1
+level: standard
+components:
+  - { path: app, stack: laravel, required: [fmt] }
+`
+
+test('components: path mit / am Ende lockert nicht', () => {
+  assert.deepEqual(configLoosenings(APP, APP.replace('path: app', 'path: app/')), [])
+  assert.deepEqual(configLoosenings(APP.replace('path: app', 'path: app/'), APP), [])
+})
+
+test('components: die Meldung zeigt den path wie in quality.yml', () => {
+  const after = APP.replace('path: app', 'path: app/').replace('[fmt]', '[]')
+  assert.match(configLoosenings(APP, after).join('\n'), /components\[app\]\.required: fmt entfernt/)
+})
+
+test('components: anderer path bleibt ein Fund', () => {
+  assert.match(
+    configLoosenings(APP, APP.replace('path: app', 'path: web')).join('\n'),
+    /components\[app\]: Komponente entfernt/,
+  )
+})
+
+// Der Runner findet für "./app" und "./" keine Dateien: filesForComponent
+// vergleicht mit dem Präfix "./app/". Die Datei-Läufe überspringen die
+// Komponente dann. Der Umschrieb lockert also wirklich.
+test('components: ./app statt app bleibt ein Fund, der Runner prüft dort nichts', () => {
+  assert.match(
+    configLoosenings(APP, APP.replace('path: app', 'path: ./app')).join('\n'),
+    /Komponente entfernt/,
+  )
+})
+
+test('components: ./ statt . bleibt ein Fund, der Runner prüft dort nichts', () => {
+  assert.match(configLoosenings(BASE, variant("path: '.'", "path: './'")).join('\n'), /entfernt/)
+})
+
+test('components: zwei Schreibweisen desselben path sind mehrdeutig, fail closed', () => {
+  const two = `${APP}  - { path: app/, stack: laravel, required: [fmt] }\n`
+  assert.match(configLoosenings(two, two).join('\n'), /mehrdeutig/)
+})

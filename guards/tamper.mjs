@@ -13,6 +13,7 @@
 
 import { isDeepStrictEqual } from 'node:util'
 import { LEVELS, validateConfig } from '../lib/config.mjs'
+import { componentBase } from '../lib/files.mjs'
 import { parseToml } from '../lib/toml.mjs'
 import { parseYaml } from '../lib/yaml.mjs'
 
@@ -1094,7 +1095,8 @@ export function configLoosenings(before, after) {
  * @returns {string}
  */
 function componentLabel(component, all) {
-  const shared = all.filter(({ path }) => path === component.path).length > 1
+  const base = componentBase(component.path)
+  const shared = all.filter(({ path }) => componentBase(path) === base).length > 1
   return shared
     ? `components[${component.path}, ${component.stack}]`
     : `components[${component.path}]`
@@ -1103,7 +1105,9 @@ function componentLabel(component, all) {
 /**
  * Ordnet jeder alten Komponente ihr Gegenstück in der neuen Fassung zu.
  *
- * Der Schlüssel ist (path, stack). Ein path allein reicht nicht: calcup hat
+ * Der Schlüssel ist (path, stack). Der path zählt so, wie der Runner ihn
+ * liest: `app` und `app/` sind dieselbe Komponente (componentBase in
+ * lib/files.mjs). Ein path allein reicht nicht: calcup hat
  * zwei Komponenten mit path "." (Befund 15.11.2026). Bleibt auf einem path
  * danach genau eine alte und genau eine neue Komponente ohne Gegenstück,
  * bilden diese beiden ein Paar. So meldet der Vergleich einen Stack-Wechsel
@@ -1134,7 +1138,7 @@ function pairComponents(old, now) {
     return groups
   }
   /** @param {{ path: string, stack: string }} component */
-  const byKey = (component) => JSON.stringify([component.path, component.stack])
+  const byKey = (component) => JSON.stringify([componentBase(component.path), component.stack])
   const oldGroups = group(old, byKey)
   const nowGroups = group(now, byKey)
 
@@ -1168,7 +1172,7 @@ function pairComponents(old, now) {
   // Was übrig bleibt und nicht mehrdeutig ist, paart der path allein.
   const taken = new Set(pairs.values())
   /** @param {{ path: string, stack: string }} component */
-  const byPath = (component) => component.path
+  const byPath = (component) => componentBase(component.path)
   const oldLeft = group(old, byPath)
   const nowLeft = group(now, byPath)
   for (const [path, indices] of oldLeft) {
