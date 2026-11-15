@@ -236,3 +236,68 @@ test('Review 2: quality.yml, die sich selbst in tamper.ignore einträgt, bleibt 
   const self = TIGHTER.replace('    - examples/\n', '    - examples/\n    - quality.yml\n')
   assert.equal(exitFor(TIGHTER, self, 'nachher', ['examples/', 'quality.yml']), 1)
 })
+
+// Fall calcup vom 15.11.2026: zwei Komponenten mit path ".", erst laravel,
+// dann node-ts. Die Zuordnung nur über path verglich die alte node-ts-
+// Komponente mit der neuen laravel-Komponente.
+const SAME_PATH = `version: 1
+level: standard
+components:
+  - { path: '.', stack: laravel, php: '8.4.19', required: [fmt, types, test] }
+  - { path: '.', stack: node-ts, required: [fmt, test, build] }
+`
+
+test('Fall calcup: required ergänzen an der zweiten Komponente mit gleichem path schärft', () => {
+  const after = SAME_PATH.replace(
+    'required: [fmt, test, build]',
+    'required: [fmt, lint, test, build]',
+  )
+  assert.notEqual(after, SAME_PATH)
+  assert.deepEqual(configLoosenings(SAME_PATH, after), [])
+})
+
+test('Fall calcup: level strict bei zwei Komponenten mit gleichem path schärft', () => {
+  const after = SAME_PATH.replace('level: standard', 'level: strict')
+  assert.deepEqual(configLoosenings(SAME_PATH, after), [])
+})
+
+test('Fall calcup: required kürzen an der zweiten Komponente bleibt ein Fund', () => {
+  const after = SAME_PATH.replace('required: [fmt, test, build]', 'required: [fmt, test]')
+  const result = configLoosenings(SAME_PATH, after)
+  assert.equal(result.length, 1)
+  assert.match(result.join('\n'), /node-ts.*required: build entfernt/)
+})
+
+test('Fall calcup: die Reihenfolge der Komponenten tauschen lockert nichts', () => {
+  const lines = SAME_PATH.trimEnd().split('\n')
+  const swapped = [...lines.slice(0, -2), ...lines.slice(-2).reverse()].join('\n')
+  assert.notEqual(swapped, SAME_PATH.trimEnd())
+  assert.deepEqual(configLoosenings(SAME_PATH, `${swapped}\n`), [])
+})
+
+test('Fall calcup: die zweite Komponente mit gleichem path entfernen lockert', () => {
+  const after = SAME_PATH.replace(/ {2}- \{ path: '\.', stack: node-ts.*\n/, '')
+  assert.match(configLoosenings(SAME_PATH, after).join('\n'), /node-ts.*Komponente entfernt/)
+})
+
+test('gleicher path und gleicher stack doppelt ist mehrdeutig, fail closed', () => {
+  const twice = `${BASE}  - { path: '.', stack: laravel, required: [fmt, test] }\n`
+  assert.match(configLoosenings(twice, twice).join('\n'), /mehrdeutig/)
+  assert.match(configLoosenings(BASE, twice).join('\n'), /mehrdeutig/)
+})
+
+test('Review: mehrdeutige Komponenten melden keine erfundene Entfernung', () => {
+  const twice = `${BASE}  - { path: '.', stack: laravel, required: [fmt, test] }\n`
+  const result = configLoosenings(twice, twice.replace('level: standard', 'level: strict'))
+  assert.match(result.join('\n'), /mehrdeutig/)
+  assert.doesNotMatch(result.join('\n'), /entfernt/)
+  // Erst nachher doppelt: die alte Komponente ist nicht entfernt.
+  const added = configLoosenings(BASE, twice).join('\n')
+  assert.match(added, /mehrdeutig/)
+  assert.doesNotMatch(added, /entfernt/)
+})
+
+test('Review: Stack-Wechsel bei geteiltem path nennt den Wechsel', () => {
+  const after = SAME_PATH.replace('stack: node-ts', 'stack: react-ts')
+  assert.match(configLoosenings(SAME_PATH, after).join('\n'), /stack: node-ts → react-ts/)
+})

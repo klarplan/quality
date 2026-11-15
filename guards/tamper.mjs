@@ -1033,9 +1033,12 @@ export function configLoosenings(before, after) {
     found.push(...unknownKeyChanges(rawOld.tamper, rawNow.tamper, TAMPER_KEYS, 'tamper.'))
   }
 
+  const { pairs, ambiguous, skipped } = pairComponents(old.components, now.components)
+  found.push(...ambiguous)
   for (const [index, component] of old.components.entries()) {
-    const label = `components[${component.path}]`
-    const nowIndex = now.components.findIndex(({ path }) => path === component.path)
+    if (skipped.old.has(index)) continue
+    const label = componentLabel(component, old.components)
+    const nowIndex = pairs.get(index) ?? -1
     const next = now.components[nowIndex]
     if (!next) {
       found.push(`${label}: Komponente entfernt`)
@@ -1065,15 +1068,113 @@ export function configLoosenings(before, after) {
   // Eine neue Komponente prüft mehr. Sie darf aber keinen eigenen Testbefehl
   // und keine unbekannten Schlüssel mitbringen: beides wäre bei einer
   // bestehenden Komponente eine Lockerung (Review vom 15.11.2026).
+  const taken = new Set(pairs.values())
   for (const [index, component] of now.components.entries()) {
-    if (old.components.some(({ path }) => path === component.path)) continue
-    const label = `components[${component.path}]`
+    if (taken.has(index) || skipped.now.has(index)) continue
+    const label = componentLabel(component, now.components)
     if (component.testCommand !== null) {
       found.push(`${label}.test_command: neue Komponente mit eigenem Testbefehl`)
     }
     found.push(...unknownKeyChanges({}, rawNow.components[index], COMPONENT_KEYS, `${label}.`))
   }
   return found
+}
+
+/**
+ * Name einer Komponente in einer Meldung. Teilt sie ihren path mit einer
+ * anderen Komponente, nennt der Name auch den stack.
+ *
+ * @param {{ path: string, stack: string }} component
+ * @param {{ path: string, stack: string }[]} all
+ * @returns {string}
+ */
+function componentLabel(component, all) {
+  const shared = all.filter(({ path }) => path === component.path).length > 1
+  return shared
+    ? `components[${component.path}, ${component.stack}]`
+    : `components[${component.path}]`
+}
+
+/**
+ * Ordnet jeder alten Komponente ihr Gegenstück in der neuen Fassung zu.
+ *
+ * Der Schlüssel ist (path, stack). Ein path allein reicht nicht: calcup hat
+ * zwei Komponenten mit path "." (Befund 15.11.2026). Bleibt auf einem path
+ * danach genau eine alte und genau eine neue Komponente ohne Gegenstück,
+ * bilden diese beiden ein Paar. So meldet der Vergleich einen Stack-Wechsel
+ * als Stack-Wechsel.
+ *
+ * Kommt (path, stack) in einer Fassung mehrfach vor, bekommt keine Komponente
+ * mit diesem Schlüssel ein Gegenstück, vorher wie nachher. Eine mehrdeutige
+ * Zuordnung ist ein Fund, fail closed. `skipped` nennt die Indizes dieser Komponenten, damit der Vergleich
+ * für sie keine weiteren Funde erfindet.
+ *
+ * @param {{ path: string, stack: string }[]} old
+ * @param {{ path: string, stack: string }[]} now
+ * @returns {{ pairs: Map<number, number>, ambiguous: string[], skipped: { old: Set<number>, now: Set<number> } }}
+ */
+function pairComponents(old, now) {
+  /**
+   * @param {{ path: string, stack: string }[]} list
+   * @param {(component: { path: string, stack: string }) => string} keyOf
+   * @returns {Map<string, number[]>}
+   */
+  const group = (list, keyOf) => {
+    /** @type {Map<string, number[]>} */
+    const groups = new Map()
+    for (const [index, component] of list.entries()) {
+      const key = keyOf(component)
+      groups.set(key, [...(groups.get(key) ?? []), index])
+    }
+    return groups
+  }
+  /** @param {{ path: string, stack: string }} component */
+  const byKey = (component) => JSON.stringify([component.path, component.stack])
+  const oldGroups = group(old, byKey)
+  const nowGroups = group(now, byKey)
+
+  /** @type {string[]} */
+  const ambiguous = []
+  const skipped = { old: new Set(), now: new Set() }
+  for (const [side, list, groups] of /** @type {const} */ ([
+    ['vorher', old, oldGroups],
+    ['nachher', now, nowGroups],
+  ])) {
+    for (const [key, indices] of groups) {
+      const first = list[indices[0] ?? -1]
+      if (indices.length < 2 || !first) continue
+      // Der Schlüssel fällt auf beiden Seiten aus der Zuordnung.
+      for (const index of oldGroups.get(key) ?? []) skipped.old.add(index)
+      for (const index of nowGroups.get(key) ?? []) skipped.now.add(index)
+      ambiguous.push(
+        `${componentLabel(first, list)}: ${indices.length}-mal ${side}, Zuordnung mehrdeutig`,
+      )
+    }
+  }
+
+  /** @type {Map<number, number>} */
+  const pairs = new Map()
+  for (const [key, [index, ...more]] of oldGroups) {
+    const [match, ...others] = nowGroups.get(key) ?? []
+    if (index === undefined || match === undefined) continue
+    if (more.length === 0 && others.length === 0) pairs.set(index, match)
+  }
+
+  // Was übrig bleibt und nicht mehrdeutig ist, paart der path allein.
+  const taken = new Set(pairs.values())
+  /** @param {{ path: string, stack: string }} component */
+  const byPath = (component) => component.path
+  const oldLeft = group(old, byPath)
+  const nowLeft = group(now, byPath)
+  for (const [path, indices] of oldLeft) {
+    const [index, ...more] = indices.filter((i) => !pairs.has(i) && !skipped.old.has(i))
+    const [match, ...others] = (nowLeft.get(path) ?? []).filter(
+      (i) => !taken.has(i) && !skipped.now.has(i),
+    )
+    if (index === undefined || match === undefined) continue
+    if (more.length === 0 && others.length === 0) pairs.set(index, match)
+  }
+  return { pairs, ambiguous, skipped }
 }
 
 /**
