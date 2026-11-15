@@ -464,6 +464,7 @@ Das Freikontingent (2'000 min/Mt.) trägt den Übergang.
 | Docker-Images und -Volumes  | `/etc/cron.daily/docker-prune`                        |
 | verwaiste Service-Container | `/etc/cron.hourly/runner-stale-containers`            |
 | Reste der Runner-Updates    | `/etc/cron.daily/runner-update-reste`, siehe unten    |
+| Grösse des Journals         | `/etc/systemd/journald.conf.d/50-groesse.conf`        |
 
 Die Ubuntu-Vorgabe von unattended-upgrades installiert nur das Release- und
 das Security-Pocket und startet nie neu. Am 27.10.2026 wartete ein
@@ -599,6 +600,14 @@ Die Liste hatte 28 Zeilen:
 Bewusst liegen geblieben: `/root/backup-php-cve-20261021` (Rückweg laut
 Doku), `/root/php8.3.36-debs` und `/root/php8.4.27-debs`, Paket-Kopien in
 `/etc` und die Caches im Betrieb.
+
+**15.11.2026, Journal auf 500 MB begrenzt.** René hat die Grenze
+freigegeben, die Koordination hat sie eingespielt. Die Datei
+`/etc/systemd/journald.conf.d/50-groesse.conf` setzt `SystemMaxUse=500M`,
+danach lief `systemctl restart systemd-journald`. Das Journal ging von
+2,1 GB auf 481 MB zurück, der älteste Eintrag ist jetzt vom 29.10.2026. Die
+Platte ist danach mit 24 von 75 GB belegt. `provision.sh` legt die Datei
+seither ebenfalls an.
 
 Offen: Ein Off-Host-Backup der VM gibt es nicht. Es läuft nur
 `dpkg-db-backup.timer`.
