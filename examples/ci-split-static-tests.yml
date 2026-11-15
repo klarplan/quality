@@ -92,7 +92,8 @@ jobs:
           composer install --no-interaction --prefer-dist --no-progress
           npm ci
 
-      # PHPStans Cache liegt im System-Temp (/tmp/phpstan). Auf ubuntu-latest ist
+      # quality legt PHPStans Cache je Checkout in den System-Temp
+      # (/tmp/phpstan-<hash des Checkout-Pfads>). Auf ubuntu-latest ist
       # der bei jedem Lauf leer, PHPStan analysiert also immer alles neu: in
       # rankscan/application 86s statt 6s. Wer das zurückholen will, nimmt den
       # Block unten dazu. Auf einem self-hosted Runner ist er überflüssig —
@@ -106,7 +107,7 @@ jobs:
       # - name: PHPStan-Cache
       #   uses: actions/cache@v4
       #   with:
-      #     path: /tmp/phpstan
+      #     path: /tmp/phpstan-*
       #     key: phpstan-${{ github.run_id }}
       #     restore-keys: phpstan-
 

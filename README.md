@@ -310,9 +310,26 @@ geänderte `.gs`-Datei an prettier und an eslint. Drei Grenzen gelten:
   deshalb eslint auf, auch wenn oxlint daneben liegt. Fehlt eslint, ist der
   lint-Schritt rot und sagt das.
 - **Kein tsc.** tsc liest keine `.gs`. Lass `types` aus `required` weg.
-- **Kein Test-Lauf je Datei.** Tests laden `.gs` meist über `fs`. vitest
-  `--related` findet sie über den Import-Graphen nicht. `quality task` und
-  `quality full` fahren die Tests ohnehin über die ganze Komponente.
+- **Kein Test-Lauf je Datei.** Tests laden `.gs` meist über `fs`.
+  `vitest related` findet sie über den Import-Graphen nicht. Ohne `--files`
+  fahren `quality task` und `quality full` die Tests über die ganze Komponente.
+
+## JS-Stacks: Tests im Datei-Lauf
+
+`quality task --files …` und `quality full --files …` fahren mit vitest nur
+die Tests, die von den genannten Dateien abhängen. quality ruft dafür
+`vitest related --run <dateien>` auf. Ohne `--files` ruft quality
+`vitest run` auf.
+
+- **Kein `vitest run --related`.** Die Option gibt es in vitest nicht. Der
+  Aufruf endet mit `CACError: Unknown option --related` und Exit 1. Bis
+  quality 0.2.34 brach darum jeder Datei-Lauf mit Tests ab. Gemessen mit
+  vitest 0.34.6, 1.6.1, 2.1.9, 3.2.7, 4.1.12 und 5.0.5.
+- **Kein verwandter Test heisst grün.** Hängt kein Test von den Dateien ab,
+  endet `vitest related` mit 0, ohne einen Test zu fahren. Der Schritt ist
+  dann grün. Willst du alle Tests, lass `--files` weg.
+- **Ein eigenes `test_command` bleibt unverändert.** quality hängt die Dateien
+  dort nicht an.
 
 ## Python
 
@@ -775,7 +792,13 @@ dem Tamper-Check die Vergleichsbasis; und `if: always()` bei den nachgelagerten
 Schritten, damit ein PR in einer Runde alles erfährt statt in zweien.
 
 Ein Punkt hängt am Runner-Typ statt am YAML: **PHPStans Cache liegt im
-System-Temp** (`/tmp/phpstan`). Auf `ubuntu-latest` ist der bei jedem Lauf leer,
+System-Temp**, je Checkout in einem eigenen Ordner `phpstan-<hash>`. Unter
+Linux ist das `/tmp/phpstan-<hash>`, unter macOS der Ordner aus `$TMPDIR`.
+quality setzt dafür `TMPDIR` für PHPStan auf diesen Ordner. PHPStan 2.3.5
+speichert im Cache absolute Pfade in den Phar des Checkouts, der ihn schrieb.
+Mit einem gemeinsamen Cache brach PHPStan deshalb ab, sobald das Board einen
+anderen Worktree gelöscht hatte. Caches gelöschter Checkouts räumt quality
+beim nächsten Lauf weg. Ein neuer Worktree startet kalt. Auf `ubuntu-latest` ist der System-Temp bei jedem Lauf leer,
 die Analyse läuft also immer kalt — in rankscan/application 86s statt 6s. Dort
 lohnt `actions/cache` auf diesen Pfad; der Block steht auskommentiert in beiden
 Vorlagen. Auf einem self-hosted Runner ist er überflüssig, und ein
