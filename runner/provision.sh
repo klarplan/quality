@@ -121,6 +121,61 @@ EOF
 chmod +x /etc/cron.daily/docker-prune
 rm -f /etc/cron.weekly/docker-prune
 
+echo "==> Aufräum-Cron für Runner-Updates (täglich)"
+# Jedes Selbstupdate eines Runners lässt die vorige Version (bin.<ver>,
+# externals.<ver>) und _work/_update liegen, zusammen rund 1,4 GB je Runner.
+# Am 15.11.2026 lagen so 25 GB unter /opt/gh-runner.
+# Es fallen nur Versionen weg, die älter als die aktive sind. Das Selbstupdate
+# legt bin.<neu> an und wartet dann auf das Ende des laufenden Jobs. Erst
+# danach stellt update.sh die Links um, ohne zu prüfen, ob das Ziel noch da
+# ist. Fehlt bin.<neu> dann, startet der Runner nicht mehr.
+# Zeigen bin und externals auf verschiedene Versionen, ist ein Update halb
+# umgestellt, und der Cron lässt den Runner-Ordner ganz in Ruhe.
+# Die Altersgrenze von 60 Minuten ist eine zweite Absicherung.
+# _update fällt erst weg, wenn kein Job läuft und beide Links auf die
+# neueste Version zeigen. Den Test dazu enthält lib/runner-update-reste.test.mjs.
+# RUNNER_ROOT, RUNNER_WORKER_PATTERN und RUNNER_LOG setzt nur der Test.
+# pgrep -f taugt hier, anders als im SSH-Befehl der Doku: im Cron steht das
+# Muster in keiner fremden Befehlszeile, und pgrep meldet sich nie selbst.
+cat >/etc/cron.daily/runner-update-reste <<'EOF'
+#!/bin/sh
+root=${RUNNER_ROOT:-/opt/gh-runner}
+pattern=${RUNNER_WORKER_PATTERN:-'[R]unner\.Worker'}
+log=${RUNNER_LOG:-logger -t runner-update-reste}
+
+for dir in "$root"/*/*/; do
+  dir=${dir%/}
+  [ -L "$dir/bin" ] && [ -L "$dir/externals" ] || continue
+  bin=$(basename "$(readlink "$dir/bin")")
+  ext=$(basename "$(readlink "$dir/externals")")
+  active=${bin#bin.}
+  [ "$active" = "${ext#externals.}" ] || continue
+
+  for old in "$dir"/bin.* "$dir"/externals.*; do
+    [ -d "$old" ] && [ ! -L "$old" ] || continue
+    ver=${old##*/}
+    ver=${ver#*.}
+    [ "$ver" != "$active" ] || continue
+    newer=$(printf '%s\n%s\n' "$ver" "$active" | sort -V | tail -n 1)
+    [ "$newer" = "$active" ] || continue
+    [ -n "$(find "$old" -maxdepth 0 -mmin +60)" ] || continue
+    rm -rf "$old" && $log "entfernt $old"
+  done
+
+  update="$dir/_work/_update"
+  [ -d "$update" ] || continue
+  pgrep -f "$pattern" >/dev/null && continue
+  newest=$(for p in "$dir"/bin.* "$dir"/externals.*; do
+    [ -d "$p" ] && echo "${p##*/}"
+  done | sed 's/^[a-z]*\.//' | sort -V | tail -n 1)
+  [ "$bin" = "bin.$newest" ] && [ "$ext" = "externals.$newest" ] || continue
+  [ -z "$(find "$update" -mmin -60 | head -n 1)" ] || continue
+  rm -rf "$update" && $log "entfernt $update"
+done
+exit 0
+EOF
+chmod +x /etc/cron.daily/runner-update-reste
+
 echo "==> unattended-upgrades: noble-updates und nächtlicher Neustart"
 # Die Ubuntu-Vorgabe installiert nur das Release- und das Security-Pocket
 # und startet nie neu. Am 27.10.2026 wartete ein Kernel-Update seit zwölf
