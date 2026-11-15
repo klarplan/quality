@@ -12,6 +12,7 @@
  */
 
 import { isDeepStrictEqual } from 'node:util'
+import { parseToml } from '../lib/toml.mjs'
 
 /**
  * Eine hinzugefügte Zeile im Diff, mit ihrer Nummer im Zielzustand.
@@ -202,6 +203,11 @@ export const PROTECTED_PATHS = [
     harmless: /^\s*(<(env|server|ini|const)\s[^<>]*\/>|<!--.*-->)\s*$/,
   },
   { pattern: /(^|\/)pytest\.ini$/, label: 'pytest-Konfiguration', reportOnly: true },
+  // pytest, mypy und flake8 lesen auch diese Dateien. Sie tragen daneben
+  // Paket- und tox-Einstellungen, die sich legitim ändern: darum nur gemeldet.
+  { pattern: /(^|\/)setup\.cfg$/, label: 'Python-Konfiguration (setup.cfg)', reportOnly: true },
+  { pattern: /(^|\/)tox\.ini$/, label: 'Python-Konfiguration (tox.ini)', reportOnly: true },
+  { pattern: /(^|\/)\.flake8$/, label: 'flake8-Konfiguration', reportOnly: true },
   { pattern: /(^|\/)\.claude\/settings\.json$/, label: 'Claude-Hook-Konfiguration' },
   // Das Board-Gate (`gate = "bash scripts/gate.sh"` in ~/.cc/projects.toml)
   // läuft vor dem Push. Ein Branch darf das Skript nicht abschwächen, das ihn
@@ -341,11 +347,16 @@ const PACKAGE_CONFIG_KEYS = [
 /** Abschnitte in pyproject.toml, die ruff, mypy und pytest lesen. */
 const PYPROJECT_GATE_SECTION = /^tool\.(ruff|mypy|pytest)(\.|$)/
 
+/** Werkzeuge unter [tool], deren Konfiguration das Gate verschieben kann. */
+const PYPROJECT_GATE_TOOLS = ['ruff', 'mypy', 'pytest']
+
 /**
- * Die Abschnitte einer TOML-Datei als Text je Abschnittsname.
+ * Rückfall, wenn der TOML-Leser eine Fassung nicht versteht: die Abschnitte
+ * einer TOML-Datei als Text je Abschnittsname.
  *
  * Kein TOML-Parser: verglichen wird nur, ob sich der Text eines Abschnitts
- * ändert. Leerzeilen und Kommentarzeilen zählen nicht. Mehrere Abschnitte mit
+ * ändert. Gepunktete Schlüssel wie `ruff.lint.ignore` unter [tool] sieht der
+ * Vergleich nicht. Leerzeilen und Kommentarzeilen zählen nicht. Mehrere Abschnitte mit
  * demselben Namen ([[tool.mypy.overrides]]) hängen aneinander.
  *
  * @param {string} text
@@ -375,6 +386,86 @@ function tomlSections(text) {
 }
 
 /**
+ * @param {unknown} v
+ * @returns {v is Record<string, unknown>}
+ */
+function isTomlTable(v) {
+  return v !== null && typeof v === 'object' && !Array.isArray(v)
+}
+
+/**
+ * Ist der Wert eine Tabelle oder eine Liste von Tabellen ([[…]])?
+ *
+ * @param {unknown} v
+ * @returns {boolean}
+ */
+function isTomlTableLike(v) {
+  return isTomlTable(v) || (Array.isArray(v) && v.length > 0 && v.every(isTomlTable))
+}
+
+/**
+ * Die Tabellen, in denen sich zwei gelesene TOML-Teilbäume unterscheiden.
+ *
+ * Sind beide Werte Tabellen, geht der Vergleich hinein. Sonst zählt die
+ * tiefste Tabelle: bei einem einfachen Wert die umgebende Tabelle, bei einer
+ * Tabelle oder Tabellenliste ihr eigener Pfad. So heissen die Funde wie die
+ * Abschnittsköpfe, etwa `tool.ruff.lint` oder `tool.mypy.overrides`.
+ *
+ * @param {unknown} a
+ * @param {unknown} b
+ * @param {string} path
+ * @param {string} parent
+ * @param {Set<string>} out
+ */
+function tomlTreeChanges(a, b, path, parent, out) {
+  if (isDeepStrictEqual(a, b)) return
+  if (isTomlTable(a) && isTomlTable(b)) {
+    for (const key of new Set([...Object.keys(a), ...Object.keys(b)])) {
+      tomlTreeChanges(a[key], b[key], `${path}.${key}`, path, out)
+    }
+    return
+  }
+  out.add(isTomlTableLike(a) || isTomlTableLike(b) ? path : parent)
+}
+
+/**
+ * Gate-Abschnitte einer pyproject.toml, die sich ändern. Versteht der
+ * TOML-Leser eine Fassung nicht, greift der Textvergleich. Ein Fehler des
+ * Lesers verschluckt so keinen Fund.
+ *
+ * @param {string} before
+ * @param {string} after
+ * @returns {string[]}
+ */
+function pyprojectGateChanges(before, after) {
+  /** @type {Record<string, unknown>} */
+  let a
+  /** @type {Record<string, unknown>} */
+  let b
+  try {
+    a = parseToml(before)
+    b = parseToml(after)
+  } catch {
+    const ta = tomlSections(before)
+    const tb = tomlSections(after)
+    return [...new Set([...ta.keys(), ...tb.keys()])]
+      .filter((name) => PYPROJECT_GATE_SECTION.test(name))
+      .filter((name) => ta.get(name) !== tb.get(name))
+      .sort()
+  }
+  const toolA = isTomlTable(a.tool) ? a.tool : {}
+  const toolB = isTomlTable(b.tool) ? b.tool : {}
+  /** @type {Set<string>} */
+  const out = new Set()
+  for (const name of PYPROJECT_GATE_TOOLS) {
+    tomlTreeChanges(toolA[name], toolB[name], `tool.${name}`, 'tool', out)
+  }
+  // Steht `tool.mypy = 1` in beiden Fassungen als einfacher Wert, heisst der
+  // Fund `tool`. Das Werkzeug liest den Wert ohnehin nicht als Konfiguration.
+  return [...out].sort()
+}
+
+/**
  * Welche Gate-Felder eines Manifests unterscheiden sich zwischen zwei Fassungen?
  *
  * - package.json und composer.json: ein bestehendes Skript, das sich ändert
@@ -383,7 +474,8 @@ function tomlSections(text) {
  *   keinen bestehenden Aufruf. Die Ausnahme ist bei package.json ein neues
  *   `pre<name>` zu einem vorhandenen Skript. Bei package.json dazu die
  *   Konfiguration von prettier, eslint und den Test-Runnern im Manifest.
- * - pyproject.toml: die Abschnitte [tool.ruff…], [tool.mypy…], [tool.pytest…].
+ * - pyproject.toml: die Teilbäume tool.ruff, tool.mypy und tool.pytest, in
+ *   jeder TOML-Schreibweise. Siehe `pyprojectGateChanges`.
  *
  * Abhängigkeiten und die Version zählen nicht. Dafür gibt es die Lockfile-Regel.
  *
@@ -398,14 +490,7 @@ function tomlSections(text) {
 export function manifestGateChanges(path, before, after) {
   if (before === null || after === null) return []
 
-  if (path.endsWith('.toml')) {
-    const a = tomlSections(before)
-    const b = tomlSections(after)
-    return [...new Set([...a.keys(), ...b.keys()])]
-      .filter((name) => PYPROJECT_GATE_SECTION.test(name))
-      .filter((name) => a.get(name) !== b.get(name))
-      .sort()
-  }
+  if (path.endsWith('.toml')) return pyprojectGateChanges(before, after)
 
   /** @type {Record<string, any>} */
   let a
