@@ -451,7 +451,7 @@ gh api repos/<owner/repo>/actions/runners -q '.runners[].status'
 **Fallback:** ein Einzeiler-Commit zurück auf `runs-on: ubuntu-latest`.
 Das Freikontingent (2'000 min/Mt.) trägt den Übergang.
 
-**Wartung:** Stand 27.10.2026, alles legt `provision.sh` an.
+**Wartung:** Stand 15.11.2026, alles legt `provision.sh` an.
 
 | Was                         | Wie                                                   |
 | --------------------------- | ----------------------------------------------------- |
@@ -507,11 +507,19 @@ rankscan-Lauf auf der VM bestätigt deshalb das Update. Nimm dafür einen
 Push auf `main`, keinen Bot-PR. Bot-PRs laufen auf `ubuntu-latest` und
 prüfen die VM nicht.
 
-Letztes Update am 27.10.2026: Docker 29.7.2 → 29.9.2, containerd 2.3.3 →
+Update am 27.10.2026: Docker 29.7.2 → 29.9.2, containerd 2.3.3 →
 2.4.2, runc 1.4.3 → 1.5.2, buildx 0.36.1 → 0.38.1, compose 5.5.0 → 5.6.1,
 gh 2.97.0 → 2.103.3. Die Release Notes nannten keine Änderung, die
 `services:`-Container oder Runner betrifft. Die entfernten Optionen von
 containerd 2.4 gehören zu CRI, und CRI ist auf der VM abgeschaltet.
+
+Letztes Update am 15.11.2026: Docker 29.9.2 → 29.9.3, dazu containerd.io,
+buildx und compose-plugin, gh 2.103.3 → 2.104.0. Aus pgdg kamen libpq-dev
+und libpq5 18.6 → 18.7, postgresql-client-17 17.11 → 17.12 und
+postgresql-client-common 293 → 295. Die Versionen von containerd, buildx und
+compose sind nicht festgehalten. Danach startete die VM neu, weil libc6 das
+seit dem 15.11. um 06:43 UTC verlangte. René hat das Update freigegeben, die
+Koordination hat es eingespielt.
 
 **Anonyme Volumes wachsen still.** `docker system prune` löscht keine Volumes.
 Jeder `services:`-Container hinterlässt aber eines. Am 03.10.2026 lagen 634
@@ -611,3 +619,29 @@ seither ebenfalls an.
 
 Offen: Ein Off-Host-Backup der VM gibt es nicht. Es läuft nur
 `dpkg-db-backup.timer`.
+
+**15.11.2026, Grenze für das Journal.** Das Journal belegte 2,1 GB, eine
+Grenze war nicht gesetzt. Die Vorgabe von systemd (10 % der Platte, höchstens
+4 GB) hätte es wieder bis gegen 4 GB wachsen lassen. Die Koordination hat auf
+Renés OK die Datei `/etc/systemd/journald.conf.d/50-groesse.conf` angelegt:
+
+```ini
+[Journal]
+SystemMaxUse=500M
+```
+
+- Danach liefen `systemctl restart systemd-journald` und
+  `journalctl --vacuum-size=500M`.
+- Ergebnis: Journal 481 MB statt 2,1 GB. Der älteste Eintrag ist vom
+  29.10.2026, vorher vom 29.08.2026.
+- Platte danach: 24 von 75 GB belegt.
+- Seither legt `provision.sh` die Datei an und startet journald neu.
+
+Den Stand prüfst du so:
+
+```bash
+ssh root@<vm> 'journalctl --disk-usage; journalctl --list-boots | head -n 2'
+```
+
+Rückweg: `rm /etc/systemd/journald.conf.d/50-groesse.conf` und
+`systemctl restart systemd-journald`.
