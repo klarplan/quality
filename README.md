@@ -293,6 +293,27 @@ Konfiguration liefe dann still auf dem Standardwert ohne Baseline.
 `init` schreibt nur, was der Audit gemessen hat, und überschreibt nichts von
 sich aus (`--force`, `--dry-run`, `--from audit.json`).
 
+## JS-Stacks: Google Apps Script (`.gs`)
+
+Die JS-Stacks (`react-ts`, `next-ts`, `node-ts`) prüfen auch `.gs`-Dateien.
+Ein Apps-Script-Projekt läuft so als `node-ts`-Komponente. Die Komponente
+braucht dafür zwei Einstellungen:
+
+- prettier liest `.gs` über einen Override: `files: '*.gs'`, `parser: 'babel'`.
+- eslint liest `.gs` über einen Block mit `files: ['**/*.gs']`.
+
+Die Datei-Läufe (Editor-Hook, `quality fix`, `quality fast`) geben eine
+geänderte `.gs`-Datei an prettier und an eslint. Drei Grenzen gelten:
+
+- **Kein oxlint.** oxlint liest keine `.gs`-Dateien und kennt keine Option für
+  weitere Endungen (geprüft mit 1.87.0). Mit `.gs` im Datei-Lauf ruft quality
+  deshalb eslint auf, auch wenn oxlint daneben liegt. Fehlt eslint, ist der
+  lint-Schritt rot und sagt das.
+- **Kein tsc.** tsc liest keine `.gs`. Lass `types` aus `required` weg.
+- **Kein Test-Lauf je Datei.** Tests laden `.gs` meist über `fs`. vitest
+  `--related` findet sie über den Import-Graphen nicht. `quality task` und
+  `quality full` fahren die Tests ohnehin über die ganze Komponente.
+
 ## Python
 
 Der Stack heisst `python` und benutzt drei Werkzeuge: `ruff` formatiert und
