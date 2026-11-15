@@ -531,7 +531,8 @@ das über 11 GB je Update-Welle. Am 15.11.2026 lagen so 25 GB unter
 `/opt/gh-runner`.
 
 Seither legt `provision.sh` den Cron `/etc/cron.daily/runner-update-reste`
-an. Stand 15.11.2026: Auf der VM ist er noch nicht eingespielt. Der Cron
+an. Auf der VM läuft er seit dem 15.11.2026. Der erste Lauf von Hand
+endete mit Exit 0 und löschte nichts, weil keine Reste mehr lagen. Der Cron
 prüft jeden Runner-Ordner mit den Links `bin` und `externals`:
 
 - Zeigen `bin` und `externals` auf verschiedene Versionen, ist ein Update
