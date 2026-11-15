@@ -369,7 +369,8 @@ Seit dem Audit vom 14.11.2026 deckt der Check weitere Stellen ab:
   `mypy.ini`, `.eslintrc*` und `.oxlintrc.jsonc`. Der PreToolUse-Hook sperrt
   sie.
 - **Nur gemeldet, nicht gesperrt:** `tsconfig*.json`, `vitest.config.*`,
-  `phpunit.xml` und `pytest.ini`. Der Tamper-Check meldet eine Änderung als
+  `phpunit.xml`, `pytest.ini`, `setup.cfg`, `tox.ini` und `.flake8`. Der
+  Tamper-Check meldet eine Änderung als
   `protected.changed`. Der Hook lässt sie durch, weil ein Agent diese Dateien
   regelmässig legitim ändert.
   In `phpunit.xml` zählen Zeilen mit `<env>`, `<server>`, `<ini>`, `<const>`
@@ -385,8 +386,11 @@ Seit dem Audit vom 14.11.2026 deckt der Check weitere Stellen ab:
     `gate.script-changed` und blockiert auch lokal.
   - `package.json`: dazu `prettier`, `eslintConfig`, `eslintIgnore`, `jest`,
     `mocha`, `c8` und `nyc` als `protected.changed`.
-  - `pyproject.toml`: die Abschnitte `[tool.ruff…]`, `[tool.mypy…]` und
-    `[tool.pytest…]` als `protected.changed`.
+  - `pyproject.toml`: die Teilbäume `tool.ruff`, `tool.mypy` und
+    `tool.pytest` als `protected.changed`. Ein eigener TOML-Leser
+    (`lib/toml.mjs`) liest beide Fassungen. So zählen auch gepunktete
+    Schlüssel wie `ruff.lint.ignore` unter `[tool]` und Köpfe wie
+    `[tool."ruff"]`. Ein Umformatieren ohne neuen Wert meldet nicht.
 
   Eine neue Abhängigkeit oder ein Versionssprung meldet weiterhin nur die
   Lockfile-Regel.
@@ -412,9 +416,12 @@ Drei Grenzen, offen benannt:
   bleibt unbemerkt. Das fände nur eine Coverage- oder Mutationsmessung.
 - `vite.config.*` ist nicht geschützt, auch wenn dort `test.exclude` stehen
   kann. Die Datei steuert vor allem den Build und ändert sich oft legitim.
-- `pyproject.toml` liest der Check ohne TOML-Parser. Gepunktete Schlüssel wie
-  `ruff.lint.ignore` unter `[tool]` erkennt er nicht. `setup.cfg`, `tox.ini` und
-  `.flake8` stehen in keiner Liste.
+- Der TOML-Leser für `pyproject.toml` ist bewusst eng. Ein Datum, mehrzeilige
+  Strings oder Hex-Zahlen liest er nicht. Dann vergleicht der Check nur den
+  Text der Abschnitte `[tool.ruff…]`, `[tool.mypy…]` und `[tool.pytest…]`, und
+  gepunktete Schlüssel unter `[tool]` bleiben unbemerkt. `setup.cfg`, `tox.ini`
+  und `.flake8` meldet der Check bei jeder Änderung, auch an Abschnitten
+  ausserhalb der Werkzeuge.
 
 Seit v0.2.0 zusätzlich zwei Dinge, die keine hinzugefügte Codezeile hinterlassen:
 

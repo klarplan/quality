@@ -103,6 +103,9 @@ for (const path of [
   'phpunit.xml',
   'phpunit.xml.dist',
   'pytest.ini',
+  'setup.cfg',
+  'backend/tox.ini',
+  '.flake8',
 ]) {
   test(`Schutzliste: eine Änderung an ${path} meldet protected.changed`, () => {
     assert.deepEqual(rulesFor(path), ['protected.changed'])
@@ -110,7 +113,13 @@ for (const path of [
 }
 
 test('Schutzliste: gewöhnliche Dateien mit ähnlichem Namen bleiben frei', () => {
-  for (const path of ['src/tsconfig.ts', 'docs/phpunit.xml.md', 'src/vitest.config.test.ts']) {
+  for (const path of [
+    'src/tsconfig.ts',
+    'docs/phpunit.xml.md',
+    'src/vitest.config.test.ts',
+    'docs/setup.cfg.md',
+    'src/flake8.py',
+  ]) {
     assert.ok(!rulesFor(path).includes('protected.changed'), path)
   }
 })
@@ -124,6 +133,9 @@ test('Schutzliste: Test-Runner und tsconfig sperrt der Hook nicht', () => {
     'vitest.config.ts',
     'phpunit.xml',
     'pytest.ini',
+    'setup.cfg',
+    'tox.ini',
+    '.flake8',
   ]) {
     assert.equal(blocked(path), false, `${path} darf der Hook nicht sperren`)
   }
@@ -262,6 +274,48 @@ test('pyproject.toml: ein Abschnittskopf mit Anführungszeichen beginnt einen ne
     '[tool.mypy]\nstrict = true\n\n[tool.poetry.group."dev".dependencies]\npytest = "^8"\n'
   const after = before.replace('pytest = "^8"', 'pytest = "^9"')
   assert.deepEqual(tamper.manifestGateChanges('pyproject.toml', before, after), [])
+})
+
+test('pyproject.toml: gepunkteter Schlüssel unter [tool] meldet', () => {
+  const after = PYPROJECT + '\n[tool]\nruff.lint.ignore = ["ALL"]\n'
+  assert.deepEqual(tamper.manifestGateChanges('pyproject.toml', PYPROJECT, after), [
+    'tool.ruff.lint',
+  ])
+})
+
+test('pyproject.toml: gepunkteter Schlüssel auf oberster Ebene meldet', () => {
+  const after = 'tool.mypy.ignore_errors = true\n' + PYPROJECT
+  assert.deepEqual(tamper.manifestGateChanges('pyproject.toml', PYPROJECT, after), ['tool.mypy'])
+})
+
+test('pyproject.toml: Abschnittskopf mit Anführungszeichen meldet', () => {
+  const after = PYPROJECT + '\n[tool."ruff".format]\nexclude = ["src"]\n'
+  assert.deepEqual(tamper.manifestGateChanges('pyproject.toml', PYPROJECT, after), [
+    'tool.ruff.format',
+  ])
+})
+
+test('pyproject.toml: Umformatieren ohne neuen Wert meldet nicht', () => {
+  const after = PYPROJECT.replace(
+    'select = ["E", "F", "I"]',
+    'select = [\n  "E",\n  "F",\n  "I",\n]',
+  )
+    .replace('[tool.mypy]\nstrict = true\n', '')
+    .replace('[project]', 'tool.mypy.strict = true\n\n[project]')
+  assert.deepEqual(tamper.manifestGateChanges('pyproject.toml', PYPROJECT, after), [])
+})
+
+test('pyproject.toml: ein neuer Werkzeug-Abschnitt meldet seinen Namen', () => {
+  const before = '[project]\nname = "x"\n'
+  const after = before + '\n[tool.ruff.lint]\nignore = ["ALL"]\n'
+  assert.deepEqual(tamper.manifestGateChanges('pyproject.toml', before, after), ['tool.ruff'])
+})
+
+test('pyproject.toml: scheitert der Leser, greift der Textvergleich', () => {
+  // Ein mehrzeiliger String liest der TOML-Leser nicht.
+  const before = PYPROJECT + '\n[tool.ruff.format]\ndocstring-code-format = """\nja\n"""\n'
+  const after = before.replace('select = ["E", "F", "I"]', 'select = ["E"]')
+  assert.deepEqual(tamper.manifestGateChanges('pyproject.toml', before, after), ['tool.ruff.lint'])
 })
 
 test('analyseDiff: ein geändertes Skript meldet gate.script-changed', () => {
