@@ -159,3 +159,30 @@ test('nur oxlint vorhanden: eine .gs-Datei macht den lint-Schritt rot', () => {
     assert.ok(!aufrufe(dir).some((l) => l.startsWith('oxlint ')))
   })
 })
+
+test('task --only test --files Code.gs: die Meldung nennt den Schritt, nicht «keine Dateien»', () => {
+  // Code.gs gehört zur Komponente connector. Für den Test-Schritt bleibt nach
+  // dem Endungsfilter aber keine Datei übrig (gemessen am 15.11.2026, a23e658).
+  mit([], (dir) => {
+    const { output, code } = quality(dir, [
+      'task',
+      '--only',
+      'test',
+      '--files',
+      'connector/Code.gs',
+    ])
+    assert.equal(code, 0, output)
+    assert.doesNotMatch(output, /Keine geänderten Dateien in konfigurierten Komponenten/)
+    assert.match(output, /test \(connector\): keine passende Datei unter Code\.gs/)
+    assert.match(output, /Schritt übersprungen — nichts zu prüfen/)
+  })
+})
+
+test('task --files mit einer Datei ausserhalb jeder Komponente: «keine Dateien»', () => {
+  mit([], (dir) => {
+    writeFileSync(join(dir, 'notiz.md'), 'x\n')
+    const { output, code } = quality(dir, ['task', '--only', 'test', '--files', 'notiz.md'])
+    assert.equal(code, 0, output)
+    assert.match(output, /Keine geänderten Dateien in konfigurierten Komponenten/)
+  })
+})

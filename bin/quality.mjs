@@ -438,6 +438,14 @@ async function runStage(stageName, options) {
   const owned = splitFmt && options.base ? branchFiles(config.root, options.base) : null
 
   const steps = []
+  /**
+   * Schritte, die eine Komponente mit Dateien hatten, für die aber keine Datei
+   * passte. Beispiel: Code.gs im Datei-Lauf des Test-Schritts. Läuft gar kein
+   * Schritt, nennt die Meldung diese Fälle statt «keine geänderten Dateien».
+   *
+   * @type {string[]}
+   */
+  const ohneDatei = []
   for (const component of config.components) {
     const stack = await loadStack(component.stack)
     const enriched = { ...component, kind: stack.kind }
@@ -520,7 +528,14 @@ async function runStage(stageName, options) {
       const verbFiles = filesForVerb(enriched.kind, verb, componentFiles)
       // Kein Werkzeug ohne Arbeit aufrufen: die meisten deuten eine leere
       // Dateiliste als Fehler, nicht als "nichts zu tun".
-      if (verbFiles && verbFiles.length === 0) continue
+      if (verbFiles && verbFiles.length === 0) {
+        if (componentFiles) {
+          ohneDatei.push(
+            `${verb} (${component.path}): keine passende Datei unter ${componentFiles.join(', ')}`,
+          )
+        }
+        continue
+      }
       const step = pflicht(stack[verb]?.({ ...ctx, files: verbFiles }), verb)
       if (step) steps.push(step)
     }
@@ -533,6 +548,12 @@ async function runStage(stageName, options) {
       ? `quality ${stageName} --only ${options.only.join(',')}`
       : `quality ${stageName}`
     code = summarize(results, { label: `${label} — ${config.level}` })
+  } else if (ohneDatei.length > 0) {
+    process.stdout.write(
+      c.dim(
+        `${ohneDatei.join('\n')}\n${ohneDatei.length > 1 ? 'Schritte' : 'Schritt'} übersprungen — nichts zu prüfen.\n`,
+      ),
+    )
   } else if (plan.verbs.length > 0) {
     process.stdout.write(
       c.dim('Keine geänderten Dateien in konfigurierten Komponenten — nichts zu prüfen.\n'),
