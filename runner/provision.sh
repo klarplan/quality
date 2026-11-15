@@ -176,6 +176,17 @@ exit 0
 EOF
 chmod +x /etc/cron.daily/runner-update-reste
 
+echo "==> Journal auf 500 MB begrenzt"
+# Ohne Grenze nimmt journald bis zu 10 % des Dateisystems, höchstens 4 GB.
+# Am 15.11.2026 belegte das Journal 2,1 GB. Mit 500 MB reichte es danach
+# bis zum 29.10.2026 zurück.
+install -d /etc/systemd/journald.conf.d
+cat >/etc/systemd/journald.conf.d/50-groesse.conf <<'EOF'
+[Journal]
+SystemMaxUse=500M
+EOF
+systemctl restart systemd-journald
+
 echo "==> unattended-upgrades: noble-updates und nächtlicher Neustart"
 # Die Ubuntu-Vorgabe installiert nur das Release- und das Security-Pocket
 # und startet nie neu. Am 27.10.2026 wartete ein Kernel-Update seit zwölf
