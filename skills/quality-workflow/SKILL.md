@@ -106,7 +106,11 @@ in der `phpstan.neon`. Die fasst du nicht an; sag es dem Menschen.
 
 Die zweite Ausnahme. Schärfen heisst: `required` ergänzen, `phpstan_level`
 erhöhen, `level` auf `strict`, `baseline` auf `false`, `tamper.ignore` kürzen,
-eine Komponente hinzufügen.
+einen Eintrag aus `exclude:` entfernen, eine Komponente hinzufügen.
+
+Einen Ordner in `exclude:` eintragen ist dagegen eine Lockerung. Schlägt
+`quality audit` einen Ordner vor, der nicht ins Gate soll, entscheidet der
+Mensch. Er trägt Pfad und Grund ein und setzt den Trailer.
 
 - **Editiere die Datei direkt.** Der Hook rechnet den Inhalt nach deinem Edit
   aus und lässt ihn durch, wenn er nur schärft.

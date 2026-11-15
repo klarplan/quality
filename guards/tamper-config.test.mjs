@@ -236,3 +236,133 @@ test('Review 2: quality.yml, die sich selbst in tamper.ignore einträgt, bleibt 
   const self = TIGHTER.replace('    - examples/\n', '    - examples/\n    - quality.yml\n')
   assert.equal(exitFor(TIGHTER, self, 'nachher', ['examples/', 'quality.yml']), 1)
 })
+
+// Fall calcup vom 15.11.2026: zwei Komponenten mit path ".", erst laravel,
+// dann node-ts. Die Zuordnung nur über path verglich die alte node-ts-
+// Komponente mit der neuen laravel-Komponente.
+const SAME_PATH = `version: 1
+level: standard
+components:
+  - { path: '.', stack: laravel, php: '8.4.19', required: [fmt, types, test] }
+  - { path: '.', stack: node-ts, required: [fmt, test, build] }
+`
+
+test('Fall calcup: required ergänzen an der zweiten Komponente mit gleichem path schärft', () => {
+  const after = SAME_PATH.replace(
+    'required: [fmt, test, build]',
+    'required: [fmt, lint, test, build]',
+  )
+  assert.notEqual(after, SAME_PATH)
+  assert.deepEqual(configLoosenings(SAME_PATH, after), [])
+})
+
+test('Fall calcup: level strict bei zwei Komponenten mit gleichem path schärft', () => {
+  const after = SAME_PATH.replace('level: standard', 'level: strict')
+  assert.deepEqual(configLoosenings(SAME_PATH, after), [])
+})
+
+test('Fall calcup: required kürzen an der zweiten Komponente bleibt ein Fund', () => {
+  const after = SAME_PATH.replace('required: [fmt, test, build]', 'required: [fmt, test]')
+  const result = configLoosenings(SAME_PATH, after)
+  assert.equal(result.length, 1)
+  assert.match(result.join('\n'), /node-ts.*required: build entfernt/)
+})
+
+test('Fall calcup: die Reihenfolge der Komponenten tauschen lockert nichts', () => {
+  const lines = SAME_PATH.trimEnd().split('\n')
+  const swapped = [...lines.slice(0, -2), ...lines.slice(-2).reverse()].join('\n')
+  assert.notEqual(swapped, SAME_PATH.trimEnd())
+  assert.deepEqual(configLoosenings(SAME_PATH, `${swapped}\n`), [])
+})
+
+test('Fall calcup: die zweite Komponente mit gleichem path entfernen lockert', () => {
+  const after = SAME_PATH.replace(/ {2}- \{ path: '\.', stack: node-ts.*\n/, '')
+  assert.match(configLoosenings(SAME_PATH, after).join('\n'), /node-ts.*Komponente entfernt/)
+})
+
+test('gleicher path und gleicher stack doppelt ist mehrdeutig, fail closed', () => {
+  const twice = `${BASE}  - { path: '.', stack: laravel, required: [fmt, test] }\n`
+  assert.match(configLoosenings(twice, twice).join('\n'), /mehrdeutig/)
+  assert.match(configLoosenings(BASE, twice).join('\n'), /mehrdeutig/)
+})
+
+test('Review: mehrdeutige Komponenten melden keine erfundene Entfernung', () => {
+  const twice = `${BASE}  - { path: '.', stack: laravel, required: [fmt, test] }\n`
+  const result = configLoosenings(twice, twice.replace('level: standard', 'level: strict'))
+  assert.match(result.join('\n'), /mehrdeutig/)
+  assert.doesNotMatch(result.join('\n'), /entfernt/)
+  // Erst nachher doppelt: die alte Komponente ist nicht entfernt.
+  const added = configLoosenings(BASE, twice).join('\n')
+  assert.match(added, /mehrdeutig/)
+  assert.doesNotMatch(added, /entfernt/)
+})
+
+test('Review: Stack-Wechsel bei geteiltem path nennt den Wechsel', () => {
+  const after = SAME_PATH.replace('stack: node-ts', 'stack: react-ts')
+  assert.match(configLoosenings(SAME_PATH, after).join('\n'), /stack: node-ts → react-ts/)
+})
+
+test('exclude: einen Pfad hinzufügen lockert, entfernen schärft', () => {
+  // Wie configs: own stellt ein Ausschluss einen Hinweis des Audits dauerhaft
+  // ab. Darum braucht er den Trailer eines Menschen (René, 15.11.2026).
+  const one = `${BASE}exclude:\n  - { path: tools/x, reason: Nur Manifest }\n`
+  assert.match(configLoosenings(BASE, one).join('\n'), /exclude: neuer Pfad tools\/x/)
+  assert.deepEqual(configLoosenings(one, BASE), [])
+})
+
+test('exclude: den Grund ändern lockert nicht', () => {
+  const before = `${BASE}exclude:\n  - { path: tools/x, reason: Nur Manifest }\n`
+  const after = `${BASE}exclude:\n  - { path: tools/x, reason: 'Nur Manifest, kein Code' }\n`
+  assert.deepEqual(configLoosenings(before, after), [])
+})
+
+test('exclude: derselbe Pfad anders geschrieben lockert nicht', () => {
+  const before = `${BASE}exclude:\n  - { path: tools/x, reason: a }\n`
+  const after = `${BASE}exclude:\n  - { path: ./tools/x/, reason: a }\n`
+  assert.deepEqual(configLoosenings(before, after), [])
+})
+
+// Befund 15.11.2026: der Tamper-Check verglich den path einer Komponente als
+// rohe Zeichenkette. Gleich gilt, was der Runner gleich behandelt:
+// filesForComponent in lib/files.mjs.
+const APP = `version: 1
+level: standard
+components:
+  - { path: app, stack: laravel, required: [fmt] }
+`
+
+test('components: path mit / am Ende lockert nicht', () => {
+  assert.deepEqual(configLoosenings(APP, APP.replace('path: app', 'path: app/')), [])
+  assert.deepEqual(configLoosenings(APP.replace('path: app', 'path: app/'), APP), [])
+})
+
+test('components: die Meldung zeigt den path wie in quality.yml', () => {
+  const after = APP.replace('path: app', 'path: app/').replace('[fmt]', '[]')
+  assert.match(configLoosenings(APP, after).join('\n'), /components\[app\]\.required: fmt entfernt/)
+})
+
+test('components: anderer path bleibt ein Fund', () => {
+  assert.match(
+    configLoosenings(APP, APP.replace('path: app', 'path: web')).join('\n'),
+    /components\[app\]: Komponente entfernt/,
+  )
+})
+
+// Der Runner findet für "./app" und "./" keine Dateien: filesForComponent
+// vergleicht mit dem Präfix "./app/". Die Datei-Läufe überspringen die
+// Komponente dann. Der Umschrieb lockert also wirklich.
+test('components: ./app statt app bleibt ein Fund, der Runner prüft dort nichts', () => {
+  assert.match(
+    configLoosenings(APP, APP.replace('path: app', 'path: ./app')).join('\n'),
+    /Komponente entfernt/,
+  )
+})
+
+test('components: ./ statt . bleibt ein Fund, der Runner prüft dort nichts', () => {
+  assert.match(configLoosenings(BASE, variant("path: '.'", "path: './'")).join('\n'), /entfernt/)
+})
+
+test('components: zwei Schreibweisen desselben path sind mehrdeutig, fail closed', () => {
+  const two = `${APP}  - { path: app/, stack: laravel, required: [fmt] }\n`
+  assert.match(configLoosenings(two, two).join('\n'), /mehrdeutig/)
+})

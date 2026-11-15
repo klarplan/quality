@@ -117,6 +117,29 @@ liefen vier Wochen lang andere Regeln als gedacht. Wer bewusst abweicht, trägt
 das hier ein — der Hinweis verschwindet dann dauerhaft, statt bei jedem Audit
 erneut überlesen zu werden.
 
+Ebenso optional ist ein `exclude:`-Block. Er nimmt einen Ordner aus dem
+Audit, den `quality audit` über ein Manifest als Komponente erkennt, der aber
+bewusst nicht ins Gate kommt:
+
+```yaml
+exclude:
+  - path: ads-cockpit/browsershot
+    reason: Nur package.json für das Prod-Image, kein Code. Dependabot beobachtet ihn.
+```
+
+- `path` ist relativ zur Repo-Wurzel und gilt für den Ordner und alles darunter.
+- `reason` ist Pflicht. Ein Ausschluss ohne Grund ist ein Konfigurationsfehler.
+- Eine Komponente aus `components:` darf nicht in einem ausgenommenen Ordner
+  liegen. Das Gate prüft weiter nur `components:` und liest `exclude:` nicht.
+- `quality audit` misst den Ordner nicht und schlägt ihn nicht vor, also auch
+  `quality init` nicht. Der Bericht nennt ihn mit Grund unter «Ausgenommen».
+- Ein neuer Eintrag zählt im Tamper-Check als Lockerung, wie ein neuer
+  `configs`-Eintrag. Er braucht den Trailer `Quality-Exception:`.
+
+Anlass war adboard: der Audit schlug `ads-cockpit/browsershot` bei jedem Lauf
+erneut als `node-ts`-Komponente vor. Einen Ausschluss gab es nur für
+npm-Workspaces per `!`-Muster.
+
 Zwei Konfigurationen werden nicht geprüft, weil ihr Werkzeug keine Vererbung
 kennt: `pint.json` und `mypy.ini`. Beide können nur kopiert werden, und eine
 Kopie lässt sich nicht von einer eigenen Konfiguration unterscheiden.
@@ -269,6 +292,27 @@ Konfiguration liefe dann still auf dem Standardwert ohne Baseline.
 
 `init` schreibt nur, was der Audit gemessen hat, und überschreibt nichts von
 sich aus (`--force`, `--dry-run`, `--from audit.json`).
+
+## JS-Stacks: Google Apps Script (`.gs`)
+
+Die JS-Stacks (`react-ts`, `next-ts`, `node-ts`) prüfen auch `.gs`-Dateien.
+Ein Apps-Script-Projekt läuft so als `node-ts`-Komponente. Die Komponente
+braucht dafür zwei Einstellungen:
+
+- prettier liest `.gs` über einen Override: `files: '*.gs'`, `parser: 'babel'`.
+- eslint liest `.gs` über einen Block mit `files: ['**/*.gs']`.
+
+Die Datei-Läufe (Editor-Hook, `quality fix`, `quality fast`) geben eine
+geänderte `.gs`-Datei an prettier und an eslint. Drei Grenzen gelten:
+
+- **Kein oxlint.** oxlint liest keine `.gs`-Dateien und kennt keine Option für
+  weitere Endungen (geprüft mit 1.87.0). Mit `.gs` im Datei-Lauf ruft quality
+  deshalb eslint auf, auch wenn oxlint daneben liegt. Fehlt eslint, ist der
+  lint-Schritt rot und sagt das.
+- **Kein tsc.** tsc liest keine `.gs`. Lass `types` aus `required` weg.
+- **Kein Test-Lauf je Datei.** Tests laden `.gs` meist über `fs`. vitest
+  `--related` findet sie über den Import-Graphen nicht. `quality task` und
+  `quality full` fahren die Tests ohnehin über die ganze Komponente.
 
 ## Python
 
@@ -498,6 +542,7 @@ vergleicht die effektiven Werte:
 | `level`                        | gleich oder `standard` → `strict`                         | `strict` → `standard`                 |
 | `baseline`                     | gleich oder `true` → `false`                              | `false` → `true`                      |
 | `configs`                      | Einträge entfernt                                         | Eintrag hinzugefügt                   |
+| `exclude`                      | Einträge entfernt, Grund geändert                         | neuer Pfad                            |
 | `tamper.ignore`                | Teilmenge des alten                                       | neuer Pfad                            |
 | Komponente (Schlüssel `path`)  | hinzugefügt, ohne `test_command` und unbekannte Schlüssel | entfernt, oder neu mit `test_command` |
 | `stack`, `php`, `test_command` | gleich                                                    | geändert                              |
