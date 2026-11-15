@@ -38,6 +38,10 @@ parameters:
     # beim adboard-Rollout passiert). PHPStans Standard im System-Temp ist
     # spurenfrei und wird zwischen Läufen ebenso wiederverwendet.
     #
+    # quality setzt dafür TMPDIR je Checkout auf <System-Temp>/phpstan-<hash>
+    # (lib/phpstan-cache.mjs). Ein Cache für alle Checkouts brach PHPStan ab,
+    # sobald ein Worktree gelöscht war (mini, 15.11.2026).
+    #
     # »Wird zwischen Läufen wiederverwendet« gilt aber nur, wo der System-Temp
     # den Lauf überlebt. Das trennt die beiden Runner-Typen:
     #
@@ -46,8 +50,8 @@ parameters:
     #                ist. Gemessen in rankscan/application am 19.08.2026: PHPStan
     #                86s kalt, 6s warm; der ganze quality-Job 4:07 -> 1:01.
     #   ubuntu-latest: jeder Lauf startet mit leerem /tmp, also immer kalt. Wer
-    #                den Gewinn dort will, legt actions/cache auf /tmp/phpstan
-    #                (der Standardpfad, sys_get_temp_dir() + '/phpstan') —
+    #                den Gewinn dort will, legt actions/cache auf /tmp/phpstan-*
+    #                (der Ordner, den quality je Checkout setzt) —
     #                fertiger Block in examples/ci-split-static-tests.yml.
     #                Abwägung: der Cache wird schnell dreistellig gross (113 MB
     #                in rankscan/application), Hoch- und Runterladen kostet also

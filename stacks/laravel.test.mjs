@@ -11,6 +11,7 @@ import {
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
+import { checkoutTempDir } from '../lib/phpstan-cache.mjs'
 import { runStep } from '../lib/run.mjs'
 import laravel from './laravel.mjs'
 import php from './php.mjs'
@@ -155,6 +156,8 @@ test('phpstan: läuft ddev, ruft der Adapter phpstan im Container auf', (t) => {
 
   const step = runnable(laravel.types?.(context(where)))
   assert.equal(step.cmd, 'ddev')
+  // Im Container liegt der Cache im Container. Ein TMPDIR vom Host hilft dort nicht.
+  assert.equal(step.env?.TMPDIR, undefined)
   assert.deepEqual(step.args?.slice(0, 7), [
     'exec',
     '--raw',
@@ -385,7 +388,9 @@ test('phpstan: verweist der gemeinsame Cache auf einen gelöschten Worktree, hei
     rmSync(root, { recursive: true, force: true })
     rmSync(temp, { recursive: true, force: true })
   })
-  mkdirSync(join(temp, 'phpstan', 'cache', 'PHPStan'), { recursive: true })
+  mkdirSync(join(checkoutTempDir(dir, { base: temp }), 'phpstan', 'cache', 'PHPStan'), {
+    recursive: true,
+  })
   const fake = join(dir, 'vendor', 'bin', 'phpstan')
   writeFileSync(
     fake,
@@ -409,6 +414,79 @@ test('phpstan: verweist der gemeinsame Cache auf einen gelöschten Worktree, hei
   assert.equal(result.code, 0)
   assert.match(result.output, /No errors/)
   assert.match(result.output, /Cache/)
+})
+
+/*
+ * Mini, 15.11.2026: Das Gate in msads heilte den gemeinsamen Cache, während
+ * ein PHPStan-Lauf aus einem anderen Projekt hineinschrieb. rmSync warf
+ * ENOTEMPTY, und der fremde Lauf brach mit «Could not write data to cache
+ * file» ab. Jeder Checkout hat deshalb seinen eigenen Cache.
+ */
+test('phpstan: heilt ein Checkout seinen Cache, läuft PHPStan in einem anderen Checkout gleichzeitig ungestört weiter', async (t) => {
+  const healing = project({ ddev: false })
+  const busy = project({ ddev: false })
+  const temp = mkdtempSync(join(tmpdir(), 'quality-tmpdir-'))
+  const saved = process.env.TMPDIR
+  t.after(() => {
+    if (saved === undefined) delete process.env.TMPDIR
+    else process.env.TMPDIR = saved
+    for (const d of [healing.root, busy.root, temp]) rmSync(d, { recursive: true, force: true })
+  })
+  // Der heilende Checkout trifft auf einen verwaisten Eintrag.
+  mkdirSync(join(checkoutTempDir(healing.dir, { base: temp }), 'phpstan', 'cache', 'PHPStan'), {
+    recursive: true,
+  })
+  const staleFake = join(healing.dir, 'vendor', 'bin', 'phpstan')
+  writeFileSync(
+    staleFake,
+    [
+      '#!/bin/sh',
+      'if [ -d "$TMPDIR/phpstan/cache/PHPStan" ]; then',
+      '  echo \'Internal error: "phar:///nirgends/worktree/vendor/phpstan/phpstan/phpstan.phar/x.stub" is not a file\'',
+      '  exit 1',
+      'fi',
+      'echo "[OK] No errors"',
+    ].join('\n') + '\n',
+  )
+  chmodSync(staleFake, 0o755)
+  // Der andere Checkout schreibt seinen Cache und braucht ihn bis zum Ende.
+  const started = join(temp, 'busy-started')
+  const busyFake = join(busy.dir, 'vendor', 'bin', 'phpstan')
+  writeFileSync(
+    busyFake,
+    [
+      '#!/bin/sh',
+      'mkdir -p "$TMPDIR/phpstan/cache/PHPStan/aa"',
+      'echo x > "$TMPDIR/phpstan/cache/PHPStan/aa/x.dat"',
+      `touch "${started}"`,
+      'sleep 1',
+      'if [ ! -f "$TMPDIR/phpstan/cache/PHPStan/aa/x.dat" ]; then',
+      '  echo "Could not write data to cache file"',
+      '  exit 1',
+      'fi',
+      'echo "[OK] No errors"',
+    ].join('\n') + '\n',
+  )
+  chmodSync(busyFake, 0o755)
+  process.env.TMPDIR = temp
+
+  const busyRun = runStep(runnable(laravel.types?.(context(busy, { files: null }))), {
+    quiet: true,
+  })
+  // Startet der andere Lauf nicht, scheitert der Test statt zu hängen.
+  const deadline = Date.now() + 10_000
+  while (!existsSync(started)) {
+    assert.ok(Date.now() < deadline, 'der andere PHPStan-Lauf startet')
+    await new Promise((r) => setTimeout(r, 20))
+  }
+  const healed = await runStep(runnable(laravel.types?.(context(healing, { files: null }))), {
+    quiet: true,
+  })
+  const other = await busyRun
+
+  assert.equal(healed.code, 0, healed.output)
+  assert.match(healed.output, /Cache/)
+  assert.equal(other.code, 0, other.output)
 })
 
 /*
