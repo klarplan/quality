@@ -709,6 +709,90 @@ die Grenzen (nur private Repos, Ausfall heisst hängend statt rot) stehen in
 [`docs/self-hosted-runner.md`](docs/self-hosted-runner.md); die Skripte liegen
 unter [`runner/`](runner/).
 
+## Board-Gate: `quality gate`
+
+Das Board (`cc --abschliessen`, `cc --integrieren`) ruft vor dem Push den
+Gate-Befehl aus `~/.cc/projects.toml` auf. `quality gate` bündelt, was dabei in
+jedem Projekt gleich ist:
+
+```bash
+quality gate [--base <ref>] [--build] [--secrets]
+```
+
+1. **Basis:** `--base`, sonst `CC_INTEGRATION_BASE`, sonst `origin/main`. Das
+   Board setzt `CC_INTEGRATION_BASE` auf den Commit von `main` vor dem Merge.
+   Die Zeile `Basis: …` am Anfang nennt die Basis, mit der das Gate prüft.
+2. **Abbruch mit Exit 2:** bei einem offenen Merge (`MERGE_HEAD`) und bei einer
+   Basis, die kein Commit ist. Das Board committet den Merge vor dem Gate. Ein
+   offener Merge entsteht nur von Hand: Committe ihn und starte das Gate erneut.
+3. **Stufe:** `quality task --base <basis>`, mit `--build` `quality full`. Der
+   Tamper-Check läuft in der Stufe mit.
+   `--only`, `--files` und `--all` gibt es für `gate` nicht. Mit ihnen
+   meldete das Gate grün, obwohl Tests oder Tamper-Check nicht liefen.
+4. **Secret-Scan (`--secrets`):** gitleaks 8.30.1 über die Commits
+   `HEAD --not <basis>`. Ist HEAD ein Merge-Commit, prüft ein zweiter Lauf
+   dessen kombinierten Diff. Dort steht, was beim Lösen von Konflikten
+   dazukam. Liegt `.gitleaks.toml` im Repo, nehmen beide Läufe sie als
+   Konfiguration.
+5. **Ergebnis:** Jeder Teil läuft, auch nach einem roten Teil. Am Ende steht
+   «Gate grün» oder die Liste der roten Teile. Exit 0 nur, wenn alles grün ist.
+
+gitleaks kommt aus dem Paket, nicht vom Projekt. Version und Prüfsummen für
+macOS (arm64, x64) und Linux (arm64, x64) stehen in `lib/gitleaks.mjs`. Der
+erste Lauf lädt das Archiv von GitHub, prüft die Prüfsumme und legt die Datei
+unter `${XDG_CACHE_HOME:-~/.cache}/standout-quality/gitleaks-8.30.1/` ab. Bei
+falscher Prüfsumme bleibt nichts liegen, und der Secret-Scan ist rot.
+
+Nicht im Kommando: die Installation der Abhängigkeiten und Extras eines
+Projekts, etwa Tests von Deploy-Skripten. Das Muster für jedes Projekt ist
+darum **Installation + Extras + `quality gate`**.
+
+### Vorlagen für den Gate-Befehl
+
+PHP mit composer, ohne Extras (Registerzeile):
+
+```toml
+gate = "cd backend && composer install --no-interaction --prefer-dist --no-progress -q && vendor/bin/quality gate --secrets"
+```
+
+Node mit npm (Registerzeile):
+
+```toml
+gate = "npm ci --no-audit --no-fund --loglevel=error && npx quality gate --secrets"
+```
+
+Python mit venv (Registerzeile):
+
+```toml
+gate = "{ test -x .venv/bin/python || python3 -m venv .venv; } && .venv/bin/pip install -q -r requirements-dev.txt && npx quality gate --secrets"
+```
+
+Mit Extras oder ddev gehört der Ablauf in `scripts/gate.sh`. Die Registerzeile
+lautet dann `gate = "bash scripts/gate.sh"`:
+
+```bash
+#!/usr/bin/env bash
+# Board-Gate: Installation, Extras, quality gate. Jeder Teil läuft.
+set -uo pipefail
+cd "$(git rev-parse --show-toplevel)"
+
+ddev exec composer install --no-interaction --no-progress --quiet || exit 1
+ddev exec npm ci --no-audit --no-fund --loglevel=error || exit 1
+
+rot=0
+bash scripts/test-deploy-gate.sh || rot=1
+
+# Die Host-Shell setzt die Basis ein, bevor ddev den Befehl im Container startet.
+ddev exec vendor/bin/quality gate --secrets \
+  --base "${CC_INTEGRATION_BASE:-$(git rev-parse origin/main)}" || rot=1
+exit $rot
+```
+
+Im ddev-Container sieht `quality gate` die Variable `CC_INTEGRATION_BASE` des
+Hosts nicht. Gib die Basis darum mit `--base` mit. `scripts/gate.sh` ist ein
+geschützter Pfad. Eine Änderung daran braucht einen Trailer
+`Quality-Exception:` von René.
+
 ## Vor dem Deploy: `quality deploy-check`
 
 Das CI-Gate allein hält kein Deploy auf. `cc --abschliessen` pusht direkt auf

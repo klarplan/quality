@@ -1,5 +1,6 @@
 import { execFileSync } from 'node:child_process'
 import { existsSync, writeFileSync } from 'node:fs'
+import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { COMMANDS, ONLY_NAMES, STAGES, parseArgs, planFor } from '../lib/args.mjs'
@@ -43,6 +44,11 @@ Prüfstufen
   ${c.bold('quality tamper')} nur den Tamper-Check: sucht im Diff nach Mustern, die ein Gate
                  umgehen statt erfüllen (Suppressions, stillgelegte Tests, Baselines)
 
+Board-Gate
+  ${c.bold('quality gate')}   Stufe task mit Tamper-Check gegen die Basis, in einem Aufruf.
+                 Basis: --base, sonst CC_INTEGRATION_BASE, sonst origin/main.
+                 Bricht bei offenem Merge oder ungültiger Basis ab (Exit 2).
+
 Einstieg in ein bestehendes Projekt
   ${c.bold('quality audit')}  misst den Ist-Zustand und schlägt eine Konfiguration vor.
                  Ändert nichts und blockiert nie. ${c.dim('(dauert Minuten)')}
@@ -84,6 +90,9 @@ Optionen
           --dry-run        nur zeigen, was geschrieben würde
           --force          bestehende Dateien überschreiben
   ${c.dim('prune:')} --dry-run        nur zeigen, was entfernt würde
+  ${c.dim('gate:')}  --build          Stufe full statt task
+          --secrets        gitleaks über die Commits des Branches und den
+                           Merge-Commit. Version und Prüfsumme stehen im Paket.
   ${c.dim('deploy-check:')} --wait <s>  auf laufende Checks warten, höchstens <s> Sekunden
 `
 }
@@ -106,7 +115,7 @@ async function runAuditCommand(options) {
   const { runAudit } = await import('../lib/audit-run.mjs')
   const { renderAudit } = await import('../lib/audit-report.mjs')
   const root = repoRoot()
-  const report = await runAudit(root, { quiet: options.quiet, secrets: options.secrets })
+  const report = await runAudit(root, { quiet: options.quiet, secrets: options.auditSecrets })
   const text = options.json
     ? JSON.stringify(report, null, 2) + '\n'
     : renderAudit(report, { generatedAt: new Date().toISOString().slice(0, 10) })
@@ -172,6 +181,73 @@ async function runInitCommand(options) {
   })
   printInitResult(result, { dryRun: options.dryRun })
   return result.written.length === 0 ? 1 : 0
+}
+
+/**
+ * `quality gate` — das Board-Gate in einem Aufruf: Basis bestimmen, Stufe mit
+ * Tamper-Check, auf Wunsch der Secret-Scan. Jeder Teil läuft, auch nach einem
+ * roten Teil. So zeigt eine Runde alle Befunde.
+ *
+ * @param {Options} options
+ * @returns {Promise<number>}
+ */
+async function runGateCommand(options) {
+  const { GateError, assertGateReady, resolveBase, secretScanSteps } =
+    await import('../lib/gate.mjs')
+  const { GITLEAKS_VERSION, ensureGitleaks, gitleaksCacheDir } = await import('../lib/gitleaks.mjs')
+  const root = repoRoot()
+  const name = resolveBase(options.base, process.env)
+  process.stdout.write(c.dim(`Basis: ${name}\n`))
+  let base
+  try {
+    base = assertGateReady(root, name)
+  } catch (err) {
+    if (err instanceof GateError) {
+      process.stderr.write(c.red(`${err.message}\n`))
+      return 2
+    }
+    throw err
+  }
+
+  const stageName = options.build ? 'full' : 'task'
+  // Wirft die Stufe, zählt sie als «keine Aussage» (2). Die übrigen Teile laufen trotzdem.
+  let stageCode
+  try {
+    stageCode = await runStage(stageName, { ...options, base })
+  } catch (err) {
+    process.stderr.write(c.red(`quality ${stageName} nicht möglich: ${messageOf(err)}\n`))
+    stageCode = 2
+  }
+  /** @type {Array<{ name: string, code: number }>} */
+  const parts = [{ name: `quality ${stageName}`, code: stageCode }]
+
+  if (options.gateSecrets) {
+    const name = 'Secret-Scan'
+    let binary = null
+    try {
+      binary = await ensureGitleaks({ cacheDir: gitleaksCacheDir(process.env, homedir()) })
+    } catch (err) {
+      process.stderr.write(c.red(`\ngitleaks laden: ${messageOf(err)}\n`))
+    }
+    let code = 1
+    if (binary) {
+      const results = await runSteps(secretScanSteps({ root, base, binary }), {
+        quiet: options.quiet,
+      })
+      code = summarize(results, {
+        label: `quality gate — ${name} (gitleaks ${GITLEAKS_VERSION})`,
+      })
+    }
+    parts.push({ name, code })
+  }
+
+  const red = parts.filter((p) => p.code !== 0)
+  if (red.length === 0) {
+    process.stdout.write(c.green('\nGate grün.\n'))
+    return 0
+  }
+  process.stdout.write(c.red(`\nGate rot:\n${red.map((p) => `  - ${p.name}`).join('\n')}\n`))
+  return Math.max(...red.map((p) => p.code))
 }
 
 /**
@@ -279,21 +355,37 @@ async function main() {
       if (options.stage === 'audit') return await runAuditCommand(options)
       if (options.stage === 'prune') return await runPruneCommand(options)
       if (options.stage === 'deploy-check') return await runDeployCheckCommand(options)
-      return await runInitCommand(options)
+      if (options.stage === 'init') return await runInitCommand(options)
+      if (options.stage === 'gate') return await runGateCommand(options)
+      // Kein Rückfall auf init: ein neues Kommando ohne Zweig hier schriebe sonst Dateien.
+      process.stderr.write(c.red(`Kommando "${options.stage}" ist noch nicht verdrahtet.\n`))
+      return 2
     } catch (err) {
       process.stderr.write(c.red(`${messageOf(err)}\n`))
       return 2
     }
   }
 
+  return runStage(/** @type {string} */ (options.stage), options)
+}
+
+/**
+ * Eine Prüfstufe: Werkzeuge der Komponenten, danach der Tamper-Check.
+ * `main` und `quality gate` rufen sie gleich auf.
+ *
+ * @param {string} stageName
+ * @param {Options} options
+ * @returns {Promise<number>} Exit-Code
+ */
+async function runStage(stageName, options) {
   // Nur eigene Schlüssel: sonst gälte `constructor` als Stufe.
-  const stage = Object.hasOwn(STAGES, options.stage)
-    ? STAGES[/** @type {keyof typeof STAGES} */ (options.stage)]
+  const stage = Object.hasOwn(STAGES, stageName)
+    ? STAGES[/** @type {keyof typeof STAGES} */ (stageName)]
     : undefined
   if (!stage) {
     process.stderr.write(
       c.red(
-        `Unbekannt: "${options.stage}". Bekannt sind: ${[...Object.keys(STAGES), ...COMMANDS].join(', ')}.\n`,
+        `Unbekannt: "${stageName}". Bekannt sind: ${[...Object.keys(STAGES), ...COMMANDS].join(', ')}.\n`,
       ),
     )
     return 2
@@ -316,7 +408,7 @@ async function main() {
   if (plan.verbs.length === 0 && !plan.tamper) {
     process.stderr.write(
       c.red(
-        `--only lässt von "quality ${options.stage}" nichts übrig (Stufe kennt: ${stage.verbs.join(', ')}${stage.tamper ? ', tamper' : ''}).\n`,
+        `--only lässt von "quality ${stageName}" nichts übrig (Stufe kennt: ${stage.verbs.join(', ')}${stage.tamper ? ', tamper' : ''}).\n`,
       ),
     )
     return 2
@@ -438,8 +530,8 @@ async function main() {
   if (steps.length > 0) {
     const results = await runSteps(steps, { quiet: options.quiet, stopOnFail: false })
     const label = options.only
-      ? `quality ${options.stage} --only ${options.only.join(',')}`
-      : `quality ${options.stage}`
+      ? `quality ${stageName} --only ${options.only.join(',')}`
+      : `quality ${stageName}`
     code = summarize(results, { label: `${label} — ${config.level}` })
   } else if (plan.verbs.length > 0) {
     process.stdout.write(
