@@ -1,6 +1,11 @@
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
-import { STALE_CACHE_NOTE, healStaleCache } from '../lib/phpstan-cache.mjs'
+import {
+  STALE_CACHE_NOTE,
+  healStaleCache,
+  phpstanEnv,
+  reflectionCacheDir,
+} from '../lib/phpstan-cache.mjs'
 import { filesInScope } from '../lib/phpstan-scope.mjs'
 import {
   failingCommand,
@@ -103,16 +108,19 @@ function phpstanStep(ctx, tool) {
     args.push(...files)
   }
   const command = phpCommand(tool, args, ctx.dir)
+  const name = `phpstan level ${ctx.component.phpstanLevel} (${ctx.component.path})`
+  // Nur ein Lauf auf dem Host bekommt einen eigenen Cache. Im ddev-Container
+  // liegt der Cache im Container, ein Schritt ohne PHP prüft nichts.
+  if (command.cmd !== tool) return { name, ...command, cwd: ctx.dir }
+  // Jeder Checkout bekommt seinen eigenen Cache, siehe lib/phpstan-cache.mjs.
+  const env = phpstanEnv(ctx.dir)
+  const cache = reflectionCacheDir(env.TMPDIR)
   return {
-    name: `phpstan level ${ctx.component.phpstanLevel} (${ctx.component.path})`,
+    name,
     ...command,
     cwd: ctx.dir,
-    // Im ddev-Container liegt der Cache im Container; dort hilft das Löschen
-    // auf dem Host nicht.
-    recover:
-      command.cmd === 'ddev'
-        ? undefined
-        : (output) => (healStaleCache(output) ? STALE_CACHE_NOTE : null),
+    env,
+    recover: (output) => (healStaleCache(output, { dir: cache }) ? STALE_CACHE_NOTE : null),
   }
 }
 
