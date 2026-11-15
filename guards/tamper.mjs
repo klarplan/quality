@@ -47,6 +47,8 @@ import { parseYaml } from '../lib/yaml.mjs'
  * @property {string | undefined} [renamedFrom] alter Pfad bei einer Umbenennung
  * @property {string[] | undefined} [gateFields] geänderte Gate-Felder eines
  *   Manifests, gesetzt von tamper-git.mjs über `manifestGateChanges`
+ * @property {boolean | undefined} [configOnlyTightens] quality.yml wird nur
+ *   geschärft, gesetzt von tamper-git.mjs über `configLoosenings`
  */
 
 /**
@@ -155,7 +157,10 @@ export const SOURCE_FILE = /\.(php|[cm]?[jt]sx?|vue|svelte|py)$/i
  * `harmless` beschreibt Zeilen, die das Gate nicht verschieben. Besteht die
  * Änderung nur aus solchen Zeilen, ist sie kein Fund.
  *
- * @type {{ pattern: RegExp, label: string, shrinkOnly?: boolean, botMayChange?: boolean, reportOnly?: boolean, harmless?: RegExp }[]}
+ * `tightenOnly` markiert quality.yml: eine Änderung, die das Gate nur schärft,
+ * ist kein Fund, im Tamper-Check wie im Hook. Siehe `configLoosenings`.
+ *
+ * @type {{ pattern: RegExp, label: string, shrinkOnly?: boolean, tightenOnly?: boolean, botMayChange?: boolean, reportOnly?: boolean, harmless?: RegExp }[]}
  */
 export const PROTECTED_PATHS = [
   // Der CI-Workflow steht zuerst: eine Datei wie .github/workflows/quality.yml
@@ -167,7 +172,7 @@ export const PROTECTED_PATHS = [
   { pattern: /(^|\/)phpstan-baseline\.neon$/, label: 'PHPStan-Baseline', shrinkOnly: true },
   { pattern: /(^|\/)\.?gitleaks[-.]baseline\.json$/, label: 'gitleaks-Baseline', shrinkOnly: true },
   { pattern: /(^|\/)eslint-suppressions\.json$/, label: 'ESLint-Suppressions', shrinkOnly: true },
-  { pattern: /^quality\.ya?ml$/, label: 'Quality-Konfiguration' },
+  { pattern: /^quality\.ya?ml$/, label: 'Quality-Konfiguration', tightenOnly: true },
   // phpstan.dist.neon liest der Stack genauso wie phpstan.neon(.dist).
   { pattern: /(^|\/)phpstan(\.dist)?\.neon(\.dist)?$/, label: 'PHPStan-Konfiguration' },
   { pattern: /(^|\/)pint\.json$/, label: 'Pint-Konfiguration' },
@@ -1075,13 +1080,23 @@ export function analyseDiff(files, { botAuthor = false, ignorePaths = [] } = {})
       })
     }
 
-    for (const { pattern, label, shrinkOnly, botMayChange, harmless } of PROTECTED_PATHS) {
+    for (const {
+      pattern,
+      label,
+      shrinkOnly,
+      tightenOnly,
+      botMayChange,
+      harmless,
+    } of PROTECTED_PATHS) {
       if (pattern.test(file.path)) {
         if (botAuthor && botMayChange) break
         if (harmless && onlyHarmlessLines(file, harmless)) break
         // Nur Baselines haben eine erwünschte Richtung. Schrumpft die Datei,
         // ist das kein Verschieben des Gates, sondern das Gegenteil.
         if (shrinkOnly && baselineOnlyShrinks(file)) break
+        // quality.yml hat ebenfalls eine Richtung: schärfen verschiebt das
+        // Gate nicht, sondern zieht es an.
+        if (tightenOnly && file.configOnlyTightens) break
         findings.push({
           rule: 'protected.changed',
           // Nachgestellt, damit die Meldung unabhängig vom Genus stimmt:

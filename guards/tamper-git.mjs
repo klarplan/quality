@@ -6,10 +6,12 @@ import {
   COMPOSER_LOCKFILE,
   GATE_MANIFEST,
   NPM_LOCKFILE,
+  PROTECTED_PATHS,
   VENDOR_PATH,
   SOFT_LOCALLY,
   analyseDiff,
   composerLockOnlyRehashes,
+  configLoosenings,
   exceptionFor,
   findExceptions,
   lockfileOnlyBumpsOwnVersion,
@@ -18,6 +20,9 @@ import {
 } from './tamper.mjs'
 
 /** @import { DiffFile, Finding } from './tamper.mjs' */
+
+/** Die Einträge, deren Änderung nur in eine Richtung kein Fund ist. */
+const TIGHTEN_ONLY = PROTECTED_PATHS.filter(({ tightenOnly }) => tightenOnly)
 
 /**
  * @param {string[]} args
@@ -249,6 +254,35 @@ function markGateFields(files, root, before, after) {
     const previous = showAt(root, before, file.renamedFrom ?? file.path)
     const gateFields = manifestGateChanges(file.path, previous, current)
     return gateFields.length > 0 ? { ...file, gateFields } : file
+  })
+}
+
+/**
+ * Markiert quality.yml, wenn die Änderung das Gate nur schärft.
+ *
+ * Die Fassungen passen zum geprüften Diff, wie bei `markOwnVersionBumps`.
+ * Eine umbenannte oder neu angelegte Datei bleibt unmarkiert: dafür gibt es
+ * keinen vergleichbaren alten Stand an derselben Stelle.
+ *
+ * @param {DiffFile[]} files
+ * @param {string} root
+ * @param {string} before
+ * @param {string | null} after
+ * @returns {DiffFile[]}
+ */
+function markConfigTightening(files, root, before, after) {
+  return files.map((file) => {
+    if (
+      file.deleted ||
+      file.renamedFrom ||
+      !TIGHTEN_ONLY.some(({ pattern }) => pattern.test(file.path))
+    )
+      return file
+    const loosenings = configLoosenings(
+      showAt(root, before, file.path),
+      readAt(root, after, file.path),
+    )
+    return loosenings.length === 0 ? { ...file, configOnlyTightens: true } : file
   })
 }
 
@@ -547,8 +581,13 @@ export function runTamper({
   if (base) {
     const mergeBase = mergeBaseOf(base, root)
     const diffText = git([...DIFF, mergeBase, 'HEAD'], root)
-    const files = markGateFields(
-      markOwnVersionBumps(parseDiff(diffText), root, mergeBase, 'HEAD'),
+    const files = markConfigTightening(
+      markGateFields(
+        markOwnVersionBumps(parseDiff(diffText), root, mergeBase, 'HEAD'),
+        root,
+        mergeBase,
+        'HEAD',
+      ),
       root,
       mergeBase,
       'HEAD',
@@ -562,8 +601,13 @@ export function runTamper({
     const diffText = committed ? git([...DIFF, 'HEAD'], root) : ''
     // `git diff` kennt neu angelegte, noch nicht erfasste Dateien nicht.
     worktreeFiles = [
-      ...markGateFields(
-        markOwnVersionBumps(parseDiff(diffText), root, 'HEAD', null),
+      ...markConfigTightening(
+        markGateFields(
+          markOwnVersionBumps(parseDiff(diffText), root, 'HEAD', null),
+          root,
+          'HEAD',
+          null,
+        ),
         root,
         'HEAD',
         null,

@@ -6,8 +6,17 @@
  * trotzdem nicht vorbei. Spec: docs/superpowers/specs/2026-11-15-quality-yml-schaerfen-design.md
  */
 import assert from 'node:assert/strict'
+import { execFileSync } from 'node:child_process'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { test } from 'node:test'
+import { runTamper } from './tamper-git.mjs'
 import { configLoosenings } from './tamper.mjs'
+
+delete process.env.GITHUB_ACTOR
+delete process.env.GITHUB_EVENT_PATH
+delete process.env.GITHUB_TOKEN
 
 const BASE = `version: 1
 level: standard
@@ -156,4 +165,49 @@ test('mehrere Lockerungen werden einzeln genannt', () => {
     'phpstan_level: 3',
   )
   assert.equal(configLoosenings(BASE, loose).length, 2)
+})
+
+/**
+ * Ein Repository mit zwei Commits: der erste legt `before` als quality.yml an,
+ * der zweite ersetzt sie durch `after`. `message` ist die Nachricht des zweiten.
+ *
+ * @param {string} before
+ * @param {string} after
+ * @param {string} [message]
+ */
+function exitFor(before, after, message = 'nachher') {
+  const root = mkdtempSync(join(tmpdir(), 'quality-config-'))
+  try {
+    const git = (/** @type {string[]} */ ...args) =>
+      execFileSync('git', args, { cwd: root, stdio: 'ignore' })
+    git('init', '--quiet')
+    git('config', 'user.email', 'test@example.com')
+    git('config', 'user.name', 'Test')
+    writeFileSync(join(root, 'quality.yml'), before)
+    git('add', '.')
+    git('commit', '--quiet', '-m', 'vorher')
+    writeFileSync(join(root, 'quality.yml'), after)
+    git('add', '.')
+    git('commit', '--quiet', '-m', message)
+    return runTamper({ root, base: 'HEAD~1', quiet: true })
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+}
+
+const TIGHTER = variant('required: [fmt]', 'required: [fmt, types, test]')
+
+test('echter Diff: quality.yml schärfen ohne Trailer ist grün', () => {
+  assert.equal(exitFor(BASE, TIGHTER), 0)
+})
+
+test('echter Diff: quality.yml lockern ohne Trailer blockiert', () => {
+  assert.equal(exitFor(TIGHTER, BASE), 1)
+})
+
+test('echter Diff: quality.yml lockern mit Trailer eines Menschen ist grün', () => {
+  assert.equal(
+    exitFor(TIGHTER, BASE, 'nachher\n\nQuality-Exception(protected.changed): Ticket #1'),
+    0,
+  )
 })
