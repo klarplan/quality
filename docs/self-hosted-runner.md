@@ -325,8 +325,9 @@ gehört ins `env:` des Schritts, nicht in das des Jobs.
 **Ausnahme 3: ein gesetztes `tmpDir` in `phpstan.neon` gehört raus.** Projekte,
 die auf `ubuntu-latest` liefen, haben es oft gesetzt, um den PHPStan-Cache über
 `actions/cache` zu retten — auf einem Wegwerf-Runner ist der System-Temp bei
-jedem Lauf leer. Hier ist er es nicht: `/tmp/phpstan` überlebt und ist ab dem
-zweiten Lauf warm. Ein projektlokales `tmpDir` verhindert genau das, weil der
+jedem Lauf leer. Hier ist er es nicht: quality legt den Cache je Checkout nach
+`/tmp/phpstan-<hash des Checkout-Pfads>` (unter macOS in den Ordner aus `$TMPDIR`). Der Pfad des Runners bleibt gleich,
+der Cache überlebt also und ist ab dem zweiten Lauf warm. Ein projektlokales `tmpDir` verhindert genau das, weil der
 Arbeitsbaum je Lauf frisch ausgecheckt wird — der Cache landet dann in einem
 Verzeichnis, das es vorher nicht gab.
 
