@@ -477,10 +477,12 @@ export default {
     if (uninstalled) return uninstalled
     const vitest = findBinary('vitest', { dir: ctx.dir, root: ctx.root, kind: 'js' })
     if (vitest) {
-      const args = ['run']
-      // vitest kann gezielt die Tests laufen lassen, die von den geänderten
-      // Dateien abhängen — das spart im Hook-Betrieb den Grossteil der Zeit.
-      if (ctx.files?.length) args.push('--related', ...ctx.files)
+      // Im Datei-Lauf fährt vitest nur die Tests, die von den Dateien abhängen.
+      // Dafür gibt es den Befehl related, --run schaltet den Watch-Modus ab.
+      // Eine Option `run --related` kennt vitest nicht: der Aufruf endet mit
+      // CACError (gemessen mit 0.34.6 bis 5.0.5). Findet related keinen
+      // Test, endet vitest mit 0.
+      const args = ctx.files?.length ? ['related', '--run', ...ctx.files] : ['run']
       return {
         name: `vitest (${ctx.component.path})`,
         ...jsCommand(vitest, args, ctx.dir, ctx.root),
