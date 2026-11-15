@@ -13,6 +13,13 @@ baseline: false
 # configs:
 #   prettier: own
 
+# Optional: Ordner, die "quality audit" erkennt, die aber bewusst nicht ins
+# Gate kommen. Der Audit misst sie nicht und schlägt sie nicht vor. Der Grund
+# ist Pflicht. Ein neuer Eintrag braucht einen Quality-Exception-Trailer.
+# exclude:
+#   - path: tools/browsershot
+#     reason: Nur package.json für das Prod-Image, kein Code.
+
 # required: Schritte, die die Komponente zusagt. Fehlt einer davon, etwa weil
 # das Werkzeug fehlt, ist das Gate rot. Ohne das Feld bleibt ein Skip grün.
 # Erlaubt sind nur Schritte, die der Stack kennt (siehe README).
