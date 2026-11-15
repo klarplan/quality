@@ -133,7 +133,7 @@ echo "==> Aufräum-Cron für Runner-Updates (täglich)"
 # umgestellt, und der Cron lässt den Runner-Ordner ganz in Ruhe.
 # Die Altersgrenze von 60 Minuten ist eine zweite Absicherung.
 # _update fällt erst weg, wenn kein Job läuft und beide Links auf die
-# neueste Version zeigen. Den Test dazu enthält runner-update-reste.test.mjs.
+# neueste Version zeigen. Den Test dazu enthält lib/runner-update-reste.test.mjs.
 # RUNNER_ROOT, RUNNER_WORKER_PATTERN und RUNNER_LOG setzt nur der Test.
 # pgrep -f taugt hier, anders als im SSH-Befehl der Doku: im Cron steht das
 # Muster in keiner fremden Befehlszeile, und pgrep meldet sich nie selbst.
