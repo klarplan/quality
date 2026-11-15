@@ -348,18 +348,16 @@ test('components: anderer path bleibt ein Fund', () => {
   )
 })
 
-// Der Runner findet für "./app" und "./" keine Dateien: filesForComponent
-// vergleicht mit dem Präfix "./app/". Die Datei-Läufe überspringen die
-// Komponente dann. Der Umschrieb lockert also wirklich.
-test('components: ./app statt app bleibt ein Fund, der Runner prüft dort nichts', () => {
-  assert.match(
-    configLoosenings(APP, APP.replace('path: app', 'path: ./app')).join('\n'),
-    /Komponente entfernt/,
-  )
+// git nennt die Dateien ohne "./". componentBase fällt "./" darum weg, und
+// der Runner findet für "./app" dieselben Dateien wie für "app". Der
+// Umschrieb lockert also nicht.
+test('components: ./app statt app lockert nicht', () => {
+  assert.deepEqual(configLoosenings(APP, APP.replace('path: app', 'path: ./app')), [])
+  assert.deepEqual(configLoosenings(APP.replace('path: app', 'path: ./app'), APP), [])
 })
 
-test('components: ./ statt . bleibt ein Fund, der Runner prüft dort nichts', () => {
-  assert.match(configLoosenings(BASE, variant("path: '.'", "path: './'")).join('\n'), /entfernt/)
+test('components: ./ statt . lockert nicht', () => {
+  assert.deepEqual(configLoosenings(BASE, variant("path: '.'", "path: './'")), [])
 })
 
 test('components: zwei Schreibweisen desselben path sind mehrdeutig, fail closed', () => {

@@ -1106,7 +1106,7 @@ function componentLabel(component, all) {
  * Ordnet jeder alten Komponente ihr Gegenstück in der neuen Fassung zu.
  *
  * Der Schlüssel ist (path, stack). Der path zählt so, wie der Runner ihn
- * liest: `app` und `app/` sind dieselbe Komponente (componentBase in
+ * liest: `app`, `app/` und `./app` sind dieselbe Komponente (componentBase in
  * lib/files.mjs). Ein path allein reicht nicht: calcup hat
  * zwei Komponenten mit path "." (Befund 15.11.2026). Bleibt auf einem path
  * danach genau eine alte und genau eine neue Komponente ohne Gegenstück,
