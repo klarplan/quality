@@ -463,6 +463,7 @@ Das Freikontingent (2'000 min/Mt.) trägt den Übergang.
 | PHP aus der PPA ondrej/php  | von Hand, wenn kein Job läuft, Befehle unter „Die VM" |
 | Docker-Images und -Volumes  | `/etc/cron.daily/docker-prune`                        |
 | verwaiste Service-Container | `/etc/cron.hourly/runner-stale-containers`            |
+| Reste der Runner-Updates    | `/etc/cron.daily/runner-update-reste`, siehe unten    |
 
 Die Ubuntu-Vorgabe von unattended-upgrades installiert nur das Release- und
 das Security-Pocket und startet nie neu. Am 27.10.2026 wartete ein
@@ -522,3 +523,76 @@ Wöchentlich reichte das Ende Oktober nicht mehr. Ein Volume belegt bis
 208 Volumes mit 23 GB auf der Platte und nur noch 18 GB waren frei. Seit dem
 27.10.2026 läuft der Cron deshalb täglich. Die Images behalten ihre 7 Tage,
 damit der Cache warm bleibt.
+
+**Runner-Updates lassen rund 1,4 GB liegen.** Jedes Selbstupdate eines
+Runners lässt die vorige Version (`bin.<ver>`, `externals.<ver>`) und
+`_work/_update` liegen, zusammen rund 1,4 GB je Runner. Bei 8 Runnern sind
+das über 11 GB je Update-Welle. Am 15.11.2026 lagen so 25 GB unter
+`/opt/gh-runner`.
+
+Seither legt `provision.sh` den Cron `/etc/cron.daily/runner-update-reste`
+an. Stand 15.11.2026: Auf der VM ist er noch nicht eingespielt. Der Cron
+prüft jeden Runner-Ordner mit den Links `bin` und `externals`:
+
+- `bin.*` und `externals.*` fallen weg, wenn kein Link darauf zeigt und der
+  Ordner älter als 60 Minuten ist. Die Altersgrenze schützt ein laufendes
+  Update: dann gibt es `bin.<neu>` schon, aber der Link zeigt noch auf die
+  alte Version.
+- `_work/_update` fällt weg, wenn kein `Runner.Worker` läuft, beide Links
+  auf die neueste Version zeigen und sich in `_update` seit 60 Minuten
+  nichts geändert hat.
+
+Jede Löschung steht im Journal:
+
+```bash
+ssh root@<vm> 'journalctl -t runner-update-reste --since "-7 days"'
+```
+
+Rückweg: `rm /etc/cron.daily/runner-update-reste`. Eine gelöschte alte
+Version braucht der Runner nicht. Fehlt `_update`, lädt ein Selbstupdate das
+Paket neu.
+
+**Vorher-Sicherungen kommen nach `/root/archiv/`.** Legst du vor einem
+Eingriff eine Sicherung an, kommt sie direkt nach
+`/root/archiv/<JJJJ-MM>-<thema>/`, zum Beispiel
+`/root/archiv/2026-11-runner/`. Lege keine `.bak`-Dateien neben das
+Original und keine Kopien lose in `/root`. Ältere Sicherungen wie
+`/root/backup-php-cve-20261021` bleiben, wo die Doku sie nennt.
+
+### Betriebslog
+
+**15.11.2026, Aufräumen der Platte.** Die Koordination hat die VM mit dem
+Skill `server-aufraeumen` aufgeräumt. René hat die Liste und den Lauf
+freigegeben.
+
+- Vorher: 37 von 75 GB belegt (51 %), davon 25 GB unter `/opt/gh-runner`.
+  Nachher: 25 GB (34 %), 48 GB frei.
+- Lauf um 14:31 UTC, Exit 0. Log:
+  `/root/archiv/aufraeumen-20261115T143131Z-q40Py8.log`.
+- Danach liefen Docker und alle 8 Runner-Dienste. Bei GitHub waren alle 8
+  Runner online und idle.
+
+Die Liste hatte 28 Zeilen:
+
+- `bin.2.338.0` und `externals.2.338.0` gelöscht in adboard/1, calcup/1,
+  rankscan/1, rankscan/2, rankscanmautic/1, rankscanpage/1 und resplan/1,
+  je 683 MB. In mcp-servers/1 waren es `bin.2.337.0` und
+  `externals.2.337.0`. Alle Runner zeigten mit `bin` und `externals` auf
+  2.338.2.
+- `_work/_update` gelöscht in allen 8 Runnern, je 683 MB. Das war das Paket
+  der Selbstupdates vom 03.11. und 06.11.2026.
+- `/opt/gh-runner/resplan/1/setup-pnpm` gelöscht, 779 MB, Stand
+  20.08.2026. Weder `.env` noch `.path` verweisen darauf. Die Action nutzt
+  `/home/runner/setup-pnpm`.
+- `/tmp/phpstan` gelöscht, 608 MB. Das war der gemeinsame PHPStan-Cache bis
+  quality v0.2.34. Ab v0.2.35 heisst er `/tmp/phpstan-<hash>`.
+- `/root/uptime-check.bak-20261105-2213` und
+  `/root/uptime-check.bak-20261107-0710` verschoben nach
+  `/root/archiv/2026-11-runner/root/`. Eine Löschfrist gibt es nicht.
+
+Bewusst liegen geblieben: `/root/backup-php-cve-20261021` (Rückweg laut
+Doku), `/root/php8.3.36-debs` und `/root/php8.4.27-debs`, Paket-Kopien in
+`/etc` und die Caches im Betrieb.
+
+Offen: Ein Off-Host-Backup der VM gibt es nicht. Es läuft nur
+`dpkg-db-backup.timer`.
