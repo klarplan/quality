@@ -14,6 +14,7 @@ import {
   readJson,
   scriptCommand,
 } from '../lib/tools.mjs'
+import { APPS_SCRIPT } from '../lib/files.mjs'
 
 /** @import { Stack, StackContext, Step } from '../lib/types.mjs' */
 
@@ -389,12 +390,17 @@ export default {
     // beenden mit 0 — ein Gate, das darauf hört, meldet nie etwas. Unter
     // "strict" zählen Warnungen deshalb als Fehler.
     const strict = ctx.config?.level === 'strict'
+    // oxlint liest keine .gs-Dateien (geprüft mit 1.87.0, keine Option für
+    // weitere Endungen). Mit --no-error-on-unmatched-pattern endete der Lauf
+    // dann ohne Ausgabe grün. Mit .gs im Datei-Lauf zählt deshalb nur eslint.
+    const needsEslint = wantsFiles && Boolean(ctx.files?.some((f) => f.endsWith(APPS_SCRIPT)))
     /** @type {Array<['oxlint' | 'eslint', string[]]>} */
     const linters = [
       ['oxlint', []],
       ['eslint', ['.']],
     ]
     for (const [tool, fallbackArgs] of linters) {
+      if (needsEslint && tool === 'oxlint') continue
       const bin = findBinary(tool, { dir: ctx.dir, root: ctx.root, kind: 'js' })
       if (bin) {
         const name = `${tool} (${ctx.component.path})`
@@ -415,6 +421,17 @@ export default {
           ),
           cwd: ctx.dir,
         }
+      }
+    }
+
+    if (needsEslint && findBinary('oxlint', { dir: ctx.dir, root: ctx.root, kind: 'js' })) {
+      return {
+        name: `oxlint (${ctx.component.path})`,
+        ...failingCommand(
+          `oxlint liest keine .gs-Dateien (${ctx.component.path}).\n` +
+            'Installiere eslint mit einer Config für **/*.gs, dann prüft quality die Datei damit.\n',
+        ),
+        cwd: ctx.dir,
       }
     }
 
