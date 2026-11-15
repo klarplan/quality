@@ -313,6 +313,9 @@ geänderte `.gs`-Datei an prettier und an eslint. Drei Grenzen gelten:
 - **Kein Test-Lauf je Datei.** Tests laden `.gs` meist über `fs`.
   `vitest related` findet sie über den Import-Graphen nicht. Ohne `--files`
   fahren `quality task` und `quality full` die Tests über die ganze Komponente.
+  Mit `--files` überspringt quality den Test-Schritt für eine `.gs`-Datei.
+  Bleibt dann kein Schritt übrig, nennt die Meldung Schritt, Komponente und
+  Datei: `test (connector): keine passende Datei unter Code.gs`.
 
 ## JS-Stacks: Tests im Datei-Lauf
 
