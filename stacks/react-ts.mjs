@@ -1,10 +1,11 @@
 import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { dirname, join, posix, relative, sep } from 'node:path'
 import {
   JS_LOCKFILES,
   LINT_STRICT_FLAG,
   containerNodeModules,
+  ddevStartHint,
   failingCommand,
   findBinary,
   findDdevRoot,
@@ -78,8 +79,9 @@ function installCommand(ctx) {
 function uninstalledStep(ctx, name) {
   if (hostInstalled(ctx.dir, ctx.root)) return null
   if (containerNodeModules(ctx.dir, ctx.root)?.installed) return null
-  const ddev = findDdevRoot(ctx.dir)
-    ? `Liegt node_modules nur im ddev-Container, starte das Projekt mit:  ddev start\n`
+  const ddevRoot = findDdevRoot(ctx.dir)
+  const ddev = ddevRoot
+    ? `Liegt node_modules nur im ddev-Container: ${ddevStartHint(ddevRoot)}`
     : ''
   return {
     name: `${name} (${ctx.component.path})`,
@@ -128,6 +130,9 @@ function runScript(script, ctx, label, extraArgs = []) {
     ...jsCommand(cmd, args, ctx.dir, ctx.root),
     cwd: ctx.dir,
     note: pm === wanted ? undefined : `${wanted} fehlt im PATH — das Skript läuft mit npm`,
+    // Was ein Skript des Projekts tut, weiss quality nicht. "eslint --fix"
+    // oder ein Build schreiben Dateien. Siehe Step.writes.
+    writes: true,
   }
 }
 
@@ -215,14 +220,33 @@ function excludedByGit(dir) {
 /**
  * Version eines Pakets neben seinem Binary in node_modules/.bin.
  *
+ * Liegt node_modules nur im ddev-Container, fehlt package.json auf dem Host.
+ * Dann liest der Container die Version. Sonst fielen Optionen weg, die von
+ * der Version abhängen (Review-Befund vom 16.11.2026).
+ *
  * @param {string} bin Pfad zu node_modules/.bin/<name>
  * @param {string} name
+ * @param {StackContext} ctx
  * @returns {number[] | null} [major, minor, patch] oder null, wenn unbekannt
  */
-function packageVersion(bin, name) {
-  const version = readJson(join(dirname(dirname(bin)), name, 'package.json'))?.version
+function packageVersion(bin, name, ctx) {
+  const host = readJson(join(dirname(dirname(bin)), name, 'package.json'))?.version
+  const version =
+    host ??
+    (hostInstalled(ctx.dir, ctx.root)
+      ? null
+      : containerNodeModules(ctx.dir, ctx.root)?.version(name))
   const match = /^(\d+)\.(\d+)\.(\d+)/.exec(String(version ?? ''))
   return match ? match.slice(1).map(Number) : null
+}
+
+/**
+ * Liegt eslint nur im ddev-Container?
+ *
+ * @param {StackContext} ctx
+ */
+function inContainer(ctx) {
+  return !hostInstalled(ctx.dir, ctx.root) && Boolean(containerNodeModules(ctx.dir, ctx.root))
 }
 
 /**
@@ -244,10 +268,9 @@ function atLeast(version, minimum) {
  * Mit .eslintrc bricht eslint bei der Option ab (geprüft mit 8.57.1 und 9.39.5).
  * Ist die Lage unklar, gilt nein: dann bleibt der Aufruf wie bisher.
  *
- * Liegt eslint nur im ddev-Container, ist die Version auf dem Host unbekannt.
- * Dann entscheidet die Konfigurationsdatei eslint.config.*. Ein eslint vor
- * 8.57 mit Flat Config bräche an der Option ab. Den Fall gibt es in keinem
- * Standout-Projekt; er wäre ein roter Schritt, kein still grüner.
+ * Liegt eslint nur im ddev-Container, liest packageVersion die Version dort.
+ * Bleibt sie unbekannt, gilt ebenfalls nein. Ein eslint vor 8.57 bräche
+ * sonst an der Option ab, auch mit eslint.config.*.
  *
  * @param {string} bin
  * @param {StackContext} ctx
@@ -255,10 +278,10 @@ function atLeast(version, minimum) {
 function eslintUsesFlatConfig(bin, ctx) {
   const env = process.env.ESLINT_USE_FLAT_CONFIG
   if (env === 'false') return false
-  const version = packageVersion(bin, 'eslint')
+  const version = packageVersion(bin, 'eslint', ctx)
+  if (!version || !atLeast(version, [8, 57, 0])) return false
   if (atLeast(version, [9, 0, 0])) return true
-  if (version && !atLeast(version, [8, 57, 0])) return false
-  if (version && env === 'true') return true
+  if (env === 'true') return true
   return [ctx.dir, ctx.root].some(
     (base) =>
       base &&
@@ -276,6 +299,11 @@ function eslintUsesFlatConfig(bin, ctx) {
  * Projekt-eslint. So gelten .eslintignore und ignorePatterns genau wie bei
  * eslint selbst (geprüft mit 8.57.1 und 9.39.5).
  *
+ * Liegt eslint nur im ddev-Container, läuft die Abfrage dort. Host-node
+ * fände das Paket nicht und gäbe alle Dateien ungefiltert zurück. Dann warnt
+ * eslint bei jeder ignorierten Datei, und unter strict ist der Schritt rot
+ * (Review-Befund vom 16.11.2026).
+ *
  * @param {string} bin
  * @param {StackContext} ctx
  * @param {string[]} files
@@ -284,8 +312,9 @@ function eslintUsesFlatConfig(bin, ctx) {
 function eslintrcKeeps(bin, ctx, files) {
   const script = `
     const { createRequire } = require('node:module')
+    const { resolve } = require('node:path')
     const [pkg, ...files] = process.argv.slice(1)
-    const api = createRequire(pkg)('eslint')
+    const api = createRequire(resolve(pkg))('eslint')
     ;(async () => {
       const ESLint = api.loadESLint ? await api.loadESLint({ useFlatConfig: false }) : api.ESLint
       const eslint = new ESLint({ cwd: process.cwd() })
@@ -295,14 +324,24 @@ function eslintrcKeeps(bin, ctx, files) {
     })().catch(() => process.exit(2))
   `
   const pkg = join(dirname(dirname(bin)), 'eslint', 'package.json')
+  // Im Container gilt der Pfad relativ zur Komponente, wie bei ddevExec.
+  const call = inContainer(ctx)
+    ? jsCommand(
+        'node',
+        ['-e', script, relative(ctx.dir, pkg).split(sep).join(posix.sep), ...files],
+        ctx.dir,
+        ctx.root,
+      )
+    : { cmd: process.execPath, args: ['-e', script, pkg, ...files] }
   try {
-    const out = execFileSync(process.execPath, ['-e', script, pkg, ...files], {
+    const out = execFileSync(call.cmd, call.args, {
       cwd: ctx.dir,
       encoding: 'utf8',
       stdio: 'pipe',
       timeout: 15_000,
     })
-    const keep = JSON.parse(out)
+    // Ein pre-exec-Hook von ddev schreibt mitunter Zeilen vor das Ergebnis.
+    const keep = JSON.parse(out.trim().split('\n').at(-1) ?? '')
     if (Array.isArray(keep) && keep.every((f) => files.includes(f))) return keep
   } catch {
     // Unklare Lage: alle Dateien prüfen, das Gate bleibt so hart wie bisher.
@@ -323,8 +362,8 @@ function eslintrcKeeps(bin, ctx, files) {
  * @type {Record<'oxlint' | 'eslint', (bin: string, ctx: StackContext, files: string[]) => { options: string[], files: string[] }>}
  */
 const LINT_FILE_RUN = {
-  oxlint: (bin, _ctx, files) => ({
-    options: atLeast(packageVersion(bin, 'oxlint'), [1, 60, 0])
+  oxlint: (bin, ctx, files) => ({
+    options: atLeast(packageVersion(bin, 'oxlint', ctx), [1, 60, 0])
       ? ['--no-error-on-unmatched-pattern']
       : [],
     files,
@@ -488,6 +527,8 @@ export default {
         name: `tests (${ctx.component.path})`,
         ...jsCommand(cmd, args, ctx.dir, ctx.root),
         cwd: ctx.dir,
+        // Ein eigener Testbefehl kann schreiben, etwa Snapshots.
+        writes: true,
       }
     }
     const uninstalled = uninstalledStep(ctx, 'tests')

@@ -308,6 +308,17 @@ test('tests: läuft ddev, startet der Adapter test_command im Container', (t) =>
   ])
 })
 
+test('tests: test_command kann schreiben — nach dem Lauf im Container synct der Runner', (t) => {
+  // Review-Befund vom 16.11.2026: ein Testbefehl schreibt etwa Snapshots.
+  fakeHost(t, { status: 'running', php: true })
+  const where = project()
+  t.after(() => rmSync(where.root, { recursive: true, force: true }))
+
+  const ctx = context(where)
+  ctx.component.testCommand = 'php artisan test'
+  assert.equal(laravel.test?.(ctx)?.writes, true)
+})
+
 test('tests: ddev gestoppt, aber PHP auf dem Host — test_command auf dem Host wie bisher', (t) => {
   // So läuft CI: .ddev/config.yaml liegt im Repo, ddev gibt es dort nicht.
   fakeHost(t, { status: 'stopped', php: true })

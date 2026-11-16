@@ -174,6 +174,8 @@ export default {
         name: `tests (${ctx.component.path})`,
         ...phpCommand(cmd, args, ctx.dir),
         cwd: ctx.dir,
+        // Ein eigener Testbefehl kann schreiben, etwa Snapshots.
+        writes: true,
       }
     }
     const uninstalled = uninstalledStep(ctx, 'tests')

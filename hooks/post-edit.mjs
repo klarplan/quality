@@ -13,9 +13,18 @@
  * Änderung stammen — die Meldung sagt das dazu.
  */
 import { exitAfterFlush } from '../lib/exit.mjs'
+import { SYNC_TIMEOUT_ENV } from '../lib/mutagen.mjs'
 import { findProjectRoot, readHookInput, relativeToRoot, runQuality } from './lib/hook-io.mjs'
 
 const TIMEOUT_MS = 8000
+
+/**
+ * Grenze für einen Mutagen-Sync im ddev-Container. Ein Sync dauert sonst
+ * rund 0,6 s. Hängt Mutagen, scheitert der erste Schritt nach 3 s mit dem
+ * Hinweis auf `ddev mutagen reset`, und jeder weitere sofort. Das passt in
+ * TIMEOUT_MS. Siehe lib/mutagen.mjs.
+ */
+const SYNC_TIMEOUT_MS = 3000
 
 const input = await readHookInput()
 const filePath = input?.tool_input?.file_path
@@ -33,6 +42,7 @@ if (!relativePath) process.exit(0) // Datei liegt ausserhalb des Projekts.
 const { code, output, timedOut } = runQuality(['fix', '--files', relativePath], {
   cwd: root,
   timeoutMs: TIMEOUT_MS,
+  env: { [SYNC_TIMEOUT_ENV]: String(SYNC_TIMEOUT_MS) },
 })
 
 if (timedOut || code === 0) process.exit(0)

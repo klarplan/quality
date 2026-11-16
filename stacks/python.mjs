@@ -253,7 +253,8 @@ export default {
   test(ctx) {
     if (ctx.component.testCommand) {
       const [cmd, ...args] = ctx.component.testCommand.split(' ')
-      return { name: `tests (${ctx.component.path})`, cmd, args, cwd: ctx.dir }
+      // Ein eigener Testbefehl kann schreiben, etwa Snapshots.
+      return { name: `tests (${ctx.component.path})`, cmd, args, cwd: ctx.dir, writes: true }
     }
     const uninstalled = uninstalledStep(ctx, 'pytest')
     if (uninstalled) return uninstalled

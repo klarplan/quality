@@ -484,13 +484,21 @@ function ddevProject({ platform, scripts = { build: 'vite build' } }) {
  * - warn: eine Zeile vor dem JSON, wie sie ein pre-exec-Hook ausgibt.
  * - listing: die Ausgabe von "ls" im Container.
  * - mutagen: ddev meldet mutagen_enabled, wie rankscan-website.
+ * - versions: Paketversionen für "cat node_modules/<paket>/package.json".
+ *   Ein Paket ohne Eintrag fehlt, cat endet dann mit exit 1.
+ * - kept: die Antwort von "node -e" im Container, wie eslintrcKeeps sie
+ *   erwartet: die Dateien, die eslint nicht ignoriert.
  *
  * @param {import('node:test').TestContext} t
  * @param {string} status
- * @param {{ approot?: string, warn?: string, listing?: string, mutagen?: boolean }} [options]
+ * @param {{ approot?: string, warn?: string, listing?: string, mutagen?: boolean, versions?: Record<string, string>, kept?: string[] }} [options]
  * @returns {{ calls: () => string[] }}
  */
-function fakeDdev(t, status, { approot, warn, listing, mutagen = false } = {}) {
+function fakeDdev(
+  t,
+  status,
+  { approot, warn, listing, mutagen = false, versions = {}, kept } = {},
+) {
   const bin = mkdtempSync(join(tmpdir(), 'quality-fake-ddev-'))
   const log = join(bin, 'calls.log')
   // Ohne cat: der PATH enthält nur dieses Verzeichnis, also nur Builtins.
@@ -509,6 +517,18 @@ case "$1" in
   exec)
     case "$*" in
       *" -- ls "*) if [ -f "${listingFile}" ]; then while IFS= read -r l; do echo "$l"; done < "${listingFile}"; else exit 2; fi ;;
+      *" -- cat "*)
+        eval "file=\\\${$#}"
+        pkg="\${file%/package.json}"
+        case "\${pkg##*/}" in
+${Object.entries(versions)
+  .map(
+    ([name, version]) => `          ${name}) echo '{"name":"${name}","version":"${version}"}' ;;`,
+  )
+  .join('\n')}
+          *) exit 1 ;;
+        esac ;;
+      *" -- node -e "*) ${kept ? `echo '${JSON.stringify(kept)}'` : 'exit 2'} ;;
     esac ;;
 esac
 `,
@@ -734,17 +754,19 @@ vitest
  * Ein ddev-Projekt ohne node_modules auf dem Host.
  *
  * @param {import('node:test').TestContext} t
+ * @param {Record<string, string>} [extraDeps]
+ * @param {string} [eslintConfig]
  * @returns {string}
  */
-function containerOnly(t) {
+function containerOnly(t, extraDeps = {}, eslintConfig = 'eslint.config.mjs') {
   const dir = uninstalled({
-    devDependencies: { eslint: '^9.0.0', prettier: '^3.0.0', vitest: '^3.0.0' },
+    devDependencies: { eslint: '^9.0.0', prettier: '^3.0.0', vitest: '^3.0.0', ...extraDeps },
   })
   t.after(() => rmSync(dir, { recursive: true, force: true }))
   mkdirSync(join(dir, '.ddev'))
   writeFileSync(join(dir, '.ddev', 'config.yaml'), 'name: demo\n')
-  // Wie rankscan-website: eslint mit Flat Config.
-  writeFileSync(join(dir, 'eslint.config.mjs'), '')
+  // Ohne Vorgabe wie rankscan-website: eslint mit Flat Config.
+  writeFileSync(join(dir, eslintConfig), '')
   return dir
 }
 
@@ -754,7 +776,7 @@ for (const [verb, rest] of /** @type {const} */ ([
   ['test', ['node_modules/.bin/vitest', 'related', '--run', 'app.js']],
 ])) {
   test(`${verb}: node_modules nur im Container und ddev läuft — der Schritt läuft im Container`, (t) => {
-    fakeDdev(t, 'running', { listing: CONTAINER_LISTING })
+    fakeDdev(t, 'running', { listing: CONTAINER_LISTING, versions: { eslint: '9.39.5' } })
     const dir = containerOnly(t)
 
     const step = reactTs[verb]?.(context(dir, { files: ['app.js'] }))
@@ -762,6 +784,62 @@ for (const [verb, rest] of /** @type {const} */ ([
     assert.deepEqual(step?.args, [...IN_CONTAINER, ...rest])
   })
 }
+
+test('lint: oxlint ab 1.60 nur im Container — der Datei-Lauf behält --no-error-on-unmatched-pattern', (t) => {
+  // Review-Befund vom 16.11.2026: die Version kam vom Host und war dort
+  // unbekannt. Ohne die Option macht jede ignorierte Datei den Hook rot.
+  fakeDdev(t, 'running', {
+    listing: '/var/www/html/node_modules:\noxlint\n\n/var/www/html/node_modules/.bin:\noxlint\n',
+    versions: { oxlint: '1.60.0' },
+  })
+  const dir = containerOnly(t, { oxlint: '^1.60.0' })
+
+  const step = reactTs.lint?.(context(dir, { files: ['app.js'] }))
+  assert.deepEqual(step?.args, [
+    ...IN_CONTAINER,
+    'node_modules/.bin/oxlint',
+    '--no-error-on-unmatched-pattern',
+    'app.js',
+  ])
+})
+
+test('lint: eslint mit .eslintrc nur im Container — der Filter fragt eslint im Container', (t) => {
+  // Review-Befund vom 16.11.2026: der Filter lief mit Host-node gegen ein
+  // eslint, das auf dem Host fehlt, und gab alle Dateien ungefiltert zurück.
+  const host = fakeDdev(t, 'running', {
+    listing: CONTAINER_LISTING,
+    versions: { eslint: '8.57.1' },
+    kept: ['app.js'],
+  })
+  const dir = containerOnly(t, {}, '.eslintrc.json')
+
+  const step = reactTs.lint?.(context(dir, { files: ['legacy/alt.js', 'app.js'] }))
+  assert.deepEqual(step?.args, [...IN_CONTAINER, 'node_modules/.bin/eslint', 'app.js'])
+  // Das Skript ist mehrzeilig. Im Protokoll steht der Aufruf darum über
+  // mehrere Zeilen.
+  const log = host.calls().join('\n')
+  assert.match(log, /exec --raw --dir \/var\/www\/html -- node -e /)
+  assert.match(log, /\s+node_modules\/eslint\/package\.json legacy\/alt\.js app\.js$/m)
+})
+
+test('lint: eslint vor 8.57 nur im Container mit eslint.config.mjs — kein --no-warn-ignored', (t) => {
+  // Review-Befund vom 16.11.2026: bei unbekannter Version entschied die
+  // Datei eslint.config.*. eslint vor 8.57 bricht an der Option ab.
+  fakeDdev(t, 'running', { listing: CONTAINER_LISTING, versions: { eslint: '8.56.0' } })
+  const dir = containerOnly(t)
+
+  const step = reactTs.lint?.(context(dir, { files: ['app.js'] }))
+  assert.ok(!step?.args?.includes('--no-warn-ignored'), String(step?.args))
+})
+
+test('lint: eslint-Version unbekannt — kein --no-warn-ignored, wie das JSDoc sagt', (t) => {
+  fakeDdev(t, 'running', { listing: CONTAINER_LISTING })
+  const dir = containerOnly(t)
+
+  const step = reactTs.lint?.(context(dir, { files: ['app.js'] }))
+  assert.equal(step?.cmd, 'ddev')
+  assert.ok(!step?.args?.includes('--no-warn-ignored'), String(step?.args))
+})
 
 test('fmt: ddev mit Mutagen — prettier --write synct vor und nach dem Lauf', async (t) => {
   // rankscan-website, 16.11.2026: ohne Sync zeigte git diff die Datei nach
@@ -781,6 +859,44 @@ test('fmt: ddev mit Mutagen — prettier --write synct vor und nach dem Lauf', a
     .filter((c) => !c.startsWith('describe') && !c.includes(' -- ls '))
     .map((c) => (c.startsWith('exec') ? c.split(' -- ')[1]?.split(' ')[0] : c))
   assert.deepEqual(order, ['mutagen sync', 'node_modules/.bin/prettier', 'mutagen sync'])
+})
+
+for (const [label, make] of /** @type {const} */ ([
+  ['build-Skript', (/** @type {StackContext} */ ctx) => reactTs.build?.(ctx)],
+  ['lint-Skript', (/** @type {StackContext} */ ctx) => reactTs.lint?.(ctx)],
+  [
+    'test_command',
+    (/** @type {StackContext} */ ctx) => {
+      ctx.component.testCommand = 'npx vitest run'
+      return reactTs.test?.(ctx)
+    },
+  ],
+])) {
+  test(`${label}: ddev mit Mutagen — nach dem Lauf synct der Runner`, async (t) => {
+    // Review-Befund vom 16.11.2026: ein Skript des Projekts kann schreiben,
+    // etwa "eslint --fix". Ohne Sync danach sah der Host die Änderung nicht.
+    const host = fakeDdev(t, 'running', { listing: CONTAINER_LISTING, mutagen: true })
+    const dir = containerOnly(t)
+
+    const step = make(context(dir, { check: false }))
+    assert.ok(step && !step.skip, String(step?.skip))
+    assert.equal(step.writes, true)
+
+    await runnerStep(step, { quiet: true })
+    const syncs = host.calls().filter((c) => c === 'mutagen sync')
+    assert.equal(syncs.length, 2)
+  })
+}
+
+test('build: ein Skript auf dem Host trägt writes — der nächste Container-Schritt synct neu', (t) => {
+  // Review-Befund 6 vom 16.11.2026: nur Host-Schritte mit writes machen den
+  // gemerkten Sync alt. Ein Skript des Projekts kann immer schreiben.
+  const dir = ddevProject({ platform: process.platform })
+  t.after(() => rmSync(dir, { recursive: true, force: true }))
+
+  const step = reactTs.build?.(context(dir))
+  assert.notEqual(step?.cmd, 'ddev')
+  assert.equal(step?.writes, true)
 })
 
 test('fmt: ddev ohne Mutagen — kein Sync', (t) => {
@@ -839,6 +955,18 @@ test('fmt: ddev meldet das Projekt eines anderen Checkouts — kein Aufruf im Co
   assert.equal(code, 1)
   assert.match(stderr, /node_modules fehlt/)
   assert.ok(!host.calls().some((call) => call.startsWith('exec')), 'kein ddev exec')
+})
+
+test('fmt: ddev läuft für einen anderen Checkout — der Hinweis nennt den Grund statt ddev start', (t) => {
+  // Review-Befund vom 16.11.2026: ddev läuft, approot zeigt nur auf einen
+  // anderen Checkout. «ddev start» hilft dann nicht.
+  fakeDdev(t, 'running', { approot: '/anderer/checkout', listing: CONTAINER_LISTING })
+  const dir = containerOnly(t)
+
+  const { code, stderr } = runStep(reactTs.fmt?.(context(dir)))
+  assert.equal(code, 1)
+  assert.match(stderr, /\/anderer\/checkout/)
+  assert.doesNotMatch(stderr, /starte das Projekt mit:\s+ddev start/)
 })
 
 test('fmt: eine Warnzeile vor dem JSON von ddev describe stört die Erkennung nicht', (t) => {
