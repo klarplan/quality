@@ -197,6 +197,7 @@ export default {
       cmd: tool,
       args: ['format', ...(ctx.check ? ['--check'] : []), ...targets(ctx)],
       cwd: ctx.dir,
+      writes: !ctx.check,
     }
   },
 

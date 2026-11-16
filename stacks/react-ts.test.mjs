@@ -95,6 +95,15 @@ function fmtArgs(ctx) {
   return step.args
 }
 
+test('fmt: --write schreibt, --check nicht', (t) => {
+  // Im ddev-Container mit Mutagen synct der Runner nach einem schreibenden Schritt.
+  const dir = repo()
+  t.after(() => rmSync(dir, { recursive: true, force: true }))
+
+  assert.equal(reactTs.fmt?.(context(dir, { check: false }))?.writes, true)
+  assert.equal(reactTs.fmt?.(context(dir))?.writes, false)
+})
+
 test('fmt: eine Datei aus info/exclude fällt aus der Prüfung der ganzen Fläche', (t) => {
   // Das Board legt WORKER.md in jedem Worktree an und schliesst sie nur über
   // info/exclude aus. prettier liest diese Datei nicht.

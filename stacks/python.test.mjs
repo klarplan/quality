@@ -191,3 +191,14 @@ for (const verb of /** @type {const} */ (['fmt', 'lint'])) {
     assert.equal(step?.args?.at(-1), '.')
   })
 }
+
+test('fmt: ruff format ohne --check schreibt, mit --check nicht', (t) => {
+  // Ein schreibender Schritt auf dem Host macht einen Mutagen-Sync alt.
+  const dir = mkdtempSync(join(tmpdir(), 'quality-python-fmt-'))
+  t.after(() => rmSync(dir, { recursive: true, force: true }))
+  mkdirSync(join(dir, '.venv', 'bin'), { recursive: true })
+  writeFileSync(join(dir, '.venv', 'bin', 'ruff'), '')
+
+  assert.equal(python.fmt?.(context(dir, { check: false }))?.writes, true)
+  assert.equal(python.fmt?.(context(dir))?.writes, false)
+})

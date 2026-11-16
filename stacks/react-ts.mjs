@@ -370,6 +370,7 @@ export default {
       ),
       cwd: ctx.dir,
       note: problem,
+      writes: !ctx.check,
     }
   },
 
