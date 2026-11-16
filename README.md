@@ -29,8 +29,11 @@ Schritt wie `pint`, `prettier --write`, einem Skript des Projekts oder
 alten Stand, und der Host sieht die Formatierung nicht. Scheitert ein Sync,
 ist der Schritt rot und nennt `ddev mutagen reset`. Jeder weitere Schritt im
 selben Projekt ist dann sofort rot, ohne neuen Sync. Ein Sync bricht nach
-20 s ab, im Post-Edit-Hook nach 3 s. Der Status «problems» aus
-`ddev describe` allein hält den Lauf nicht an.
+20 s ab, im Post-Edit-Hook nach 3 s. Eine Abfrage an ddev wie `describe`
+bricht nach 10 s ab, im Post-Edit-Hook nach 2 s. Der Schritt meldet dann
+«ddev antwortet nicht», und quality fragt ddev im selben Lauf nicht noch
+einmal. Der Status «problems» aus `ddev describe` allein hält den Lauf nicht
+an.
 
 JS/TS-Projekt:
 

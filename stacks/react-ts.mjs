@@ -6,6 +6,8 @@ import {
   LINT_STRICT_FLAG,
   containerNodeModules,
   ddevStartHint,
+  ddevTimeout,
+  ddevUnresponsive,
   failingCommand,
   findBinary,
   findDdevRoot,
@@ -80,6 +82,11 @@ function uninstalledStep(ctx, name) {
   if (hostInstalled(ctx.dir, ctx.root)) return null
   if (containerNodeModules(ctx.dir, ctx.root)?.installed) return null
   const ddevRoot = findDdevRoot(ctx.dir)
+  // Ein Timeout sagt nichts über node_modules. Siehe ddevUnresponsive.
+  const silent = ddevRoot ? ddevUnresponsive(ddevRoot) : null
+  if (silent) {
+    return { name: `${name} (${ctx.component.path})`, ...failingCommand(silent), cwd: ctx.dir }
+  }
   const ddev = ddevRoot
     ? `Liegt node_modules nur im ddev-Container: ${ddevStartHint(ddevRoot)}`
     : ''
@@ -338,7 +345,8 @@ function eslintrcKeeps(bin, ctx, files) {
       cwd: ctx.dir,
       encoding: 'utf8',
       stdio: 'pipe',
-      timeout: 15_000,
+      // Im Container gilt das ddev-Budget, im Post-Edit-Hook also 2 s.
+      timeout: call.cmd === 'ddev' ? ddevTimeout() : 15_000,
     })
     // Ein pre-exec-Hook von ddev schreibt mitunter Zeilen vor das Ergebnis.
     const keep = JSON.parse(out.trim().split('\n').at(-1) ?? '')

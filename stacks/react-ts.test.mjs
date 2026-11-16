@@ -488,16 +488,18 @@ function ddevProject({ platform, scripts = { build: 'vite build' } }) {
  *   Ein Paket ohne Eintrag fehlt, cat endet dann mit exit 1.
  * - kept: die Antwort von "node -e" im Container, wie eslintrcKeeps sie
  *   erwartet: die Dateien, die eslint nicht ignoriert.
+ * - hang: dieser Aufruf antwortet nie, wie ddev bei hängendem Docker.
+ *   Ohne sleep: der PATH enthält nur Builtins.
  *
  * @param {import('node:test').TestContext} t
  * @param {string} status
- * @param {{ approot?: string, warn?: string, listing?: string, mutagen?: boolean, versions?: Record<string, string>, kept?: string[] }} [options]
+ * @param {{ approot?: string, warn?: string, listing?: string, mutagen?: boolean, versions?: Record<string, string>, kept?: string[], hang?: 'describe' | 'ls' }} [options]
  * @returns {{ calls: () => string[] }}
  */
 function fakeDdev(
   t,
   status,
-  { approot, warn, listing, mutagen = false, versions = {}, kept } = {},
+  { approot, warn, listing, mutagen = false, versions = {}, kept, hang } = {},
 ) {
   const bin = mkdtempSync(join(tmpdir(), 'quality-fake-ddev-'))
   const log = join(bin, 'calls.log')
@@ -509,6 +511,8 @@ function fakeDdev(
     join(bin, 'ddev'),
     `#!/bin/sh
 echo "$*" >> "${log}"
+${hang === 'describe' ? 'case "$1" in describe) while :; do :; done ;; esac' : ''}
+${hang === 'ls' ? 'case "$*" in *" -- ls "*) while :; do :; done ;; esac' : ''}
 case "$1" in
   describe)
     ${warn ? `echo "${warn}"` : ':'}
@@ -968,6 +972,41 @@ test('fmt: ddev läuft für einen anderen Checkout — der Hinweis nennt den Gru
   assert.match(stderr, /\/anderer\/checkout/)
   assert.doesNotMatch(stderr, /starte das Projekt mit:\s+ddev start/)
 })
+
+/**
+ * Setzt das ddev-Budget wie der Post-Edit-Hook, nur kürzer.
+ *
+ * @param {import('node:test').TestContext} t
+ */
+function shortDdevBudget(t) {
+  const before = process.env.QUALITY_DDEV_TIMEOUT_MS
+  process.env.QUALITY_DDEV_TIMEOUT_MS = '300'
+  t.after(() => {
+    if (before === undefined) delete process.env.QUALITY_DDEV_TIMEOUT_MS
+    else process.env.QUALITY_DDEV_TIMEOUT_MS = before
+  })
+}
+
+for (const hang of /** @type {const} */ (['describe', 'ls'])) {
+  test(`fmt: ddev hängt bei "${hang}" — der Schritt meldet «ddev antwortet nicht»`, (t) => {
+    // Review vom 16.11.2026: ein Timeout galt als «ddev läuft nicht» oder
+    // als «node_modules fehlt». Beides schickt zur falschen Abhilfe.
+    shortDdevBudget(t)
+    const host = fakeDdev(t, 'running', { listing: CONTAINER_LISTING, hang })
+    const dir = containerOnly(t)
+
+    const start = Date.now()
+    const { code, stderr } = runStep(reactTs.fmt?.(context(dir, { files: ['app.js'] })))
+    assert.ok(Date.now() - start < 5000)
+    assert.equal(code, 1)
+    assert.match(stderr, /ddev antwortet nicht/)
+    assert.doesNotMatch(stderr, /ddev start/)
+    assert.doesNotMatch(stderr, /node_modules fehlt/)
+    // Nach dem ersten Timeout fragt quality ddev nicht noch einmal.
+    const asked = host.calls().filter((c) => c.startsWith(hang === 'ls' ? 'exec' : 'describe'))
+    assert.equal(asked.length, 1, asked.join('\n'))
+  })
+}
 
 test('fmt: eine Warnzeile vor dem JSON von ddev describe stört die Erkennung nicht', (t) => {
   // Der pre-exec-Hook von rankscan-website schreibt vor das JSON eine Zeile.

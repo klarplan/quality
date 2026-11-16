@@ -51,16 +51,17 @@ function project({ ddev = true, component = '.' } = {}) {
  * Arbeitsverzeichnis des Aufrufs, wie bei einem eigenen ddev-Projekt.
  *
  * @param {import('node:test').TestContext} t
- * @param {{ status: string, php?: boolean, approot?: string, mutagen?: boolean }} options
+ * @param {{ status: string, php?: boolean, approot?: string, mutagen?: boolean, hang?: boolean }} options
  * @returns {{ calls: () => string[] }}
  */
-function fakeHost(t, { status, php = false, approot, mutagen = false }) {
+function fakeHost(t, { status, php = false, approot, mutagen = false, hang = false }) {
   const bin = mkdtempSync(join(tmpdir(), 'quality-fake-ddev-'))
   const log = join(bin, 'calls.log')
   writeFileSync(
     join(bin, 'ddev'),
     `#!/bin/sh
 echo "$*" >> "${log}"
+${hang ? 'case "$1" in describe) while :; do :; done ;; esac' : ''}
 case "$1" in
   describe) printf '{"level":"info","msg":"","raw":{"status":"${status}","approot":"%s","mutagen_enabled":${mutagen}}}\\n' "${approot ?? '$(pwd -P)'}" ;;
   mutagen) ;;
@@ -249,6 +250,25 @@ test('phpstan: ddev gestoppt und kein PHP auf dem Host — klare Meldung statt e
   const result = await runStep(runnable(laravel.types?.(context(where))), { quiet: true })
   assert.equal(result.code, 1)
   assert.match(result.output, /ddev läuft nicht/)
+})
+
+test('pint: ddev antwortet nicht — klare Meldung, kein Aufruf auf dem Host', async (t) => {
+  // Review vom 16.11.2026: ein Timeout von ddev describe galt als gestopptes
+  // ddev. Mit PHP auf dem Host lief pint dann dort, mit der falschen Version.
+  const before = process.env.QUALITY_DDEV_TIMEOUT_MS
+  process.env.QUALITY_DDEV_TIMEOUT_MS = '300'
+  t.after(() => {
+    if (before === undefined) delete process.env.QUALITY_DDEV_TIMEOUT_MS
+    else process.env.QUALITY_DDEV_TIMEOUT_MS = before
+  })
+  fakeHost(t, { status: 'running', php: true, hang: true })
+  const where = project()
+  t.after(() => rmSync(where.root, { recursive: true, force: true }))
+
+  const result = await runStep(runnable(laravel.fmt?.(context(where))), { quiet: true })
+  assert.equal(result.code, 1)
+  assert.match(result.output, /ddev antwortet nicht/)
+  assert.doesNotMatch(result.output, /ddev start/)
 })
 
 test('pint: ddev gestoppt, aber PHP auf dem Host — Aufruf auf dem Host wie bisher', (t) => {
