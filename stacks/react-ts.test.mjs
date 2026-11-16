@@ -13,6 +13,7 @@ import {
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
+import { runStep as runnerStep } from '../lib/run.mjs'
 import reactTs from './react-ts.mjs'
 
 /** @import { StackContext } from '../lib/types.mjs' */
@@ -475,21 +476,40 @@ function ddevProject({ platform, scripts = { build: 'vite build' } }) {
 /**
  * Ersetzt den PATH durch einen Ordner mit einem falschen "ddev". Das Skript
  * schreibt jeden Aufruf in ein Protokoll und meldet den gewünschten Status
- * im Format von "ddev describe -j".
+ * im Format von "ddev describe -j". approot ist ohne Vorgabe das
+ * Arbeitsverzeichnis des Aufrufs, wie bei einem eigenen ddev-Projekt.
+ *
+ * Optional:
+ * - approot: ein fremder Pfad, wie beim Projekt des Haupt-Checkouts.
+ * - warn: eine Zeile vor dem JSON, wie sie ein pre-exec-Hook ausgibt.
+ * - listing: die Ausgabe von "ls" im Container.
+ * - mutagen: ddev meldet mutagen_enabled, wie rankscan-website.
  *
  * @param {import('node:test').TestContext} t
  * @param {string} status
+ * @param {{ approot?: string, warn?: string, listing?: string, mutagen?: boolean }} [options]
  * @returns {{ calls: () => string[] }}
  */
-function fakeDdev(t, status) {
+function fakeDdev(t, status, { approot, warn, listing, mutagen = false } = {}) {
   const bin = mkdtempSync(join(tmpdir(), 'quality-fake-ddev-'))
   const log = join(bin, 'calls.log')
+  // Ohne cat: der PATH enthält nur dieses Verzeichnis, also nur Builtins.
+  const listingFile = join(bin, 'listing.txt')
+  if (listing !== undefined) writeFileSync(listingFile, listing)
+  const root = approot ?? '$(pwd -P)'
   writeFileSync(
     join(bin, 'ddev'),
     `#!/bin/sh
 echo "$*" >> "${log}"
 case "$1" in
-  describe) printf '{"level":"info","msg":"","raw":{"status":"${status}"}}\\n' ;;
+  describe)
+    ${warn ? `echo "${warn}"` : ':'}
+    printf '{"level":"info","msg":"","raw":{"status":"${status}","approot":"%s","mutagen_enabled":${mutagen}}}\\n' "${root}" ;;
+  mutagen) ;;
+  exec)
+    case "$*" in
+      *" -- ls "*) if [ -f "${listingFile}" ]; then while IFS= read -r l; do echo "$l"; done < "${listingFile}"; else exit 2; fi ;;
+    esac ;;
 esac
 `,
   )
@@ -686,4 +706,149 @@ test('lint: ignoriert eslint mit .eslintrc alle Dateien, entfällt der Schritt',
   assert.equal(step?.cmd, undefined)
   assert.ok(step?.skip)
   assert.equal(step?.nothingToDo, true)
+})
+
+/* ── node_modules nur im ddev-Container ───────────────────────────────── */
+
+/*
+ * rankscan-website legt node_modules nur im Container an, in einem eigenen
+ * Volume (.ddev/docker-compose.node-modules.yaml). Auf dem Host fehlt der
+ * Ordner ganz. Der Hook meldete darum "node_modules fehlt" und blieb nach drei
+ * Versuchen rot, obwohl "ddev exec vendor/bin/quality fast" grün war.
+ */
+
+/** Die Ausgabe von "ls -1A" im Container: Pakete und Binaries. */
+const CONTAINER_LISTING = `/var/www/html/node_modules:
+.bin
+eslint
+prettier
+vitest
+
+/var/www/html/node_modules/.bin:
+eslint
+prettier
+vitest
+`
+
+/**
+ * Ein ddev-Projekt ohne node_modules auf dem Host.
+ *
+ * @param {import('node:test').TestContext} t
+ * @returns {string}
+ */
+function containerOnly(t) {
+  const dir = uninstalled({
+    devDependencies: { eslint: '^9.0.0', prettier: '^3.0.0', vitest: '^3.0.0' },
+  })
+  t.after(() => rmSync(dir, { recursive: true, force: true }))
+  mkdirSync(join(dir, '.ddev'))
+  writeFileSync(join(dir, '.ddev', 'config.yaml'), 'name: demo\n')
+  // Wie rankscan-website: eslint mit Flat Config.
+  writeFileSync(join(dir, 'eslint.config.mjs'), '')
+  return dir
+}
+
+for (const [verb, rest] of /** @type {const} */ ([
+  ['fmt', ['node_modules/.bin/prettier', '--check', '--ignore-unknown', 'app.js']],
+  ['lint', ['node_modules/.bin/eslint', '--no-warn-ignored', 'app.js']],
+  ['test', ['node_modules/.bin/vitest', 'related', '--run', 'app.js']],
+])) {
+  test(`${verb}: node_modules nur im Container und ddev läuft — der Schritt läuft im Container`, (t) => {
+    fakeDdev(t, 'running', { listing: CONTAINER_LISTING })
+    const dir = containerOnly(t)
+
+    const step = reactTs[verb]?.(context(dir, { files: ['app.js'] }))
+    assert.equal(step?.cmd, 'ddev')
+    assert.deepEqual(step?.args, [...IN_CONTAINER, ...rest])
+  })
+}
+
+test('fmt: ddev mit Mutagen — prettier --write synct vor und nach dem Lauf', async (t) => {
+  // rankscan-website, 16.11.2026: ohne Sync zeigte git diff die Datei nach
+  // quality fix weiter unformatiert.
+  const host = fakeDdev(t, 'running', { listing: CONTAINER_LISTING, mutagen: true })
+  const dir = containerOnly(t)
+
+  const step = reactTs.fmt?.(context(dir, { files: ['app.js'], check: false }))
+  assert.ok(step)
+  assert.equal(step.mutagen, dir)
+  assert.equal(step.writes, true)
+
+  const result = await runnerStep(step, { quiet: true })
+  assert.equal(result.code, 0, result.output)
+  const order = host
+    .calls()
+    .filter((c) => !c.startsWith('describe') && !c.includes(' -- ls '))
+    .map((c) => (c.startsWith('exec') ? c.split(' -- ')[1]?.split(' ')[0] : c))
+  assert.deepEqual(order, ['mutagen sync', 'node_modules/.bin/prettier', 'mutagen sync'])
+})
+
+test('fmt: ddev ohne Mutagen — kein Sync', (t) => {
+  fakeDdev(t, 'running', { listing: CONTAINER_LISTING })
+  const dir = containerOnly(t)
+
+  const step = reactTs.fmt?.(context(dir, { files: ['app.js'], check: false }))
+  assert.equal(step?.mutagen, undefined)
+})
+
+test('build: node_modules nur im Container — das npm-Skript läuft im Container', (t) => {
+  fakeDdev(t, 'running', { listing: CONTAINER_LISTING })
+  const dir = containerOnly(t)
+
+  const step = reactTs.build?.(context(dir))
+  assert.equal(step?.cmd, 'ddev')
+  assert.deepEqual(step?.args, [...IN_CONTAINER, 'npm', 'run', '--silent', 'build'])
+})
+
+test('types: tsc fehlt im Container — der Schritt entfällt mit Hinweis, statt rot zu sein', (t) => {
+  // rankscan-website hat kein TypeScript. Im Container meldet quality dort
+  // "Werkzeug tsc nicht gefunden"; der Host muss dasselbe sagen.
+  fakeDdev(t, 'running', { listing: CONTAINER_LISTING })
+  const dir = containerOnly(t)
+
+  const step = reactTs.types?.(context(dir))
+  assert.match(String(step?.skip), /tsc/)
+})
+
+test('fmt: kein node_modules, ddev gestoppt — der Hinweis nennt ddev start', (t) => {
+  fakeDdev(t, 'stopped')
+  const dir = containerOnly(t)
+
+  const { code, stderr } = runStep(reactTs.fmt?.(context(dir)))
+  assert.equal(code, 1)
+  assert.match(stderr, /node_modules fehlt/)
+  assert.match(stderr, /ddev start/)
+})
+
+test('fmt: auch im Container kein node_modules — der Schritt meldet node_modules fehlt', (t) => {
+  fakeDdev(t, 'running')
+  const dir = containerOnly(t)
+
+  const { code, stderr } = runStep(reactTs.fmt?.(context(dir)))
+  assert.equal(code, 1)
+  assert.match(stderr, /node_modules fehlt/)
+})
+
+test('fmt: ddev meldet das Projekt eines anderen Checkouts — kein Aufruf im Container', (t) => {
+  // FALLE in rankscan-website: Vor worktree-setup.sh heisst das Projekt im
+  // Worktree wie das des Haupt-Checkouts. ddev exec prüfte dann fremden Code.
+  const host = fakeDdev(t, 'running', { approot: '/anderer/checkout', listing: CONTAINER_LISTING })
+  const dir = containerOnly(t)
+
+  const { code, stderr } = runStep(reactTs.fmt?.(context(dir)))
+  assert.equal(code, 1)
+  assert.match(stderr, /node_modules fehlt/)
+  assert.ok(!host.calls().some((call) => call.startsWith('exec')), 'kein ddev exec')
+})
+
+test('fmt: eine Warnzeile vor dem JSON von ddev describe stört die Erkennung nicht', (t) => {
+  // Der pre-exec-Hook von rankscan-website schreibt vor das JSON eine Zeile.
+  fakeDdev(t, 'running', {
+    warn: 'Warnung - node_modules im Container veraltet.',
+    listing: CONTAINER_LISTING,
+  })
+  const dir = containerOnly(t)
+
+  const step = reactTs.fmt?.(context(dir, { files: ['app.js'] }))
+  assert.equal(step?.cmd, 'ddev')
 })

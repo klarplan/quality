@@ -47,13 +47,14 @@ function project({ ddev = true, component = '.' } = {}) {
 /**
  * Ersetzt den PATH durch einen Ordner mit einem falschen "ddev". Das Skript
  * schreibt jeden Aufruf in ein Protokoll und meldet den gewünschten Status
- * im Format von "ddev describe -j".
+ * im Format von "ddev describe -j". approot ist ohne Vorgabe das
+ * Arbeitsverzeichnis des Aufrufs, wie bei einem eigenen ddev-Projekt.
  *
  * @param {import('node:test').TestContext} t
- * @param {{ status: string, php?: boolean, mutagen?: boolean }} options
+ * @param {{ status: string, php?: boolean, approot?: string, mutagen?: boolean }} options
  * @returns {{ calls: () => string[] }}
  */
-function fakeHost(t, { status, php = false, mutagen = false }) {
+function fakeHost(t, { status, php = false, approot, mutagen = false }) {
   const bin = mkdtempSync(join(tmpdir(), 'quality-fake-ddev-'))
   const log = join(bin, 'calls.log')
   writeFileSync(
@@ -61,7 +62,7 @@ function fakeHost(t, { status, php = false, mutagen = false }) {
     `#!/bin/sh
 echo "$*" >> "${log}"
 case "$1" in
-  describe) printf '{"level":"info","msg":"","raw":{"status":"${status}","mutagen_enabled":${mutagen}}}\\n' ;;
+  describe) printf '{"level":"info","msg":"","raw":{"status":"${status}","approot":"%s","mutagen_enabled":${mutagen}}}\\n' "${approot ?? '$(pwd -P)'}" ;;
   mutagen) ;;
   exec) echo "im Container: $*" ;;
 esac
@@ -258,6 +259,18 @@ test('pint: ddev gestoppt, aber PHP auf dem Host — Aufruf auf dem Host wie bis
 
   const step = runnable(laravel.fmt?.(context(where)))
   assert.equal(step.cmd, join(where.dir, 'vendor', 'bin', 'pint'))
+})
+
+test('pint: ddev meldet das Projekt eines anderen Checkouts — Aufruf auf dem Host', (t) => {
+  // FALLE in Worktrees: Vor dem Bootstrap trägt .ddev/config.yaml den Namen
+  // des Haupt-Checkouts. ddev exec prüfte dann dessen Code statt des eigenen.
+  const host = fakeHost(t, { status: 'running', php: true, approot: '/anderer/checkout' })
+  const where = project()
+  t.after(() => rmSync(where.root, { recursive: true, force: true }))
+
+  const step = runnable(laravel.fmt?.(context(where)))
+  assert.equal(step.cmd, join(where.dir, 'vendor', 'bin', 'pint'))
+  assert.ok(!host.calls().some((call) => call.startsWith('exec')), 'kein ddev exec')
 })
 
 test('pint: ohne ddev-Projekt fragt der Adapter ddev gar nicht erst', (t) => {
