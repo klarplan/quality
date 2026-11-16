@@ -159,6 +159,8 @@ test('test: ein eigener Testbefehl läuft auch ohne .venv unverändert', (t) => 
   })
   const step = python.test?.(context(dir, { component }))
   assert.equal(step?.cmd, 'uv')
+  // Der Befehl kann schreiben. Ein Container-Schritt danach synct dann neu.
+  assert.equal(step?.writes, true)
 })
 
 /**

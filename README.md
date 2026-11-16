@@ -18,15 +18,22 @@ composer require --dev larastan/larastan laravel/pint   # Werkzeuge des laravel-
 
 Pint und PHPStan laufen im ddev-Container, wenn das Projekt eine
 `.ddev/config.yaml` hat und ddev läuft. Sonst laufen sie auf dem Host. Fehlt
-dort PHP und ddev ist gestoppt, meldet der Schritt `ddev start`. Der Runner
+dort PHP und ddev ist gestoppt, meldet der Schritt `ddev start`. Läuft ddev
+für einen anderen Checkout, nennt der Schritt dessen approot. Der Runner
 startet ddev nie selbst.
 
 Nutzt ddev Mutagen (`performance_mode: mutagen`), ruft der Runner vor dem
 ersten Schritt im Container `ddev mutagen sync` auf. Nach einem schreibenden
-Schritt wie `pint` oder `prettier --write` folgt ein zweiter Sync. Ohne Sync
-prüft der Container einen alten Stand, und der Host sieht die Formatierung
-nicht. Scheitert ein Sync, ist der Schritt rot und nennt `ddev mutagen reset`.
-Der Status «problems» aus `ddev describe` allein hält den Lauf nicht an.
+Schritt wie `pint`, `prettier --write`, einem Skript des Projekts oder
+`test_command` folgt ein zweiter Sync. Ohne Sync prüft der Container einen
+alten Stand, und der Host sieht die Formatierung nicht. Scheitert ein Sync,
+ist der Schritt rot und nennt `ddev mutagen reset`. Jeder weitere Schritt im
+selben Projekt ist dann sofort rot, ohne neuen Sync. Ein Sync bricht nach
+20 s ab, im Post-Edit-Hook nach 3 s. Eine Abfrage an ddev wie `describe`
+bricht nach 10 s ab, im Post-Edit-Hook nach 2 s. Der Schritt meldet dann
+«ddev antwortet nicht», und quality fragt ddev im selben Lauf nicht noch
+einmal. Der Status «problems» aus `ddev describe` allein hält den Lauf nicht
+an.
 
 JS/TS-Projekt:
 

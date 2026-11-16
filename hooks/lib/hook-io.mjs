@@ -43,17 +43,17 @@ export function findProjectRoot(startDir) {
  * Projekt das Paket (noch) nicht installiert hat.
  *
  * @param {string[]} args
- * @param {{ cwd: string, timeoutMs: number }} options
+ * @param {{ cwd: string, timeoutMs: number, env?: Record<string, string> }} options
  * @returns {{ code: number, output: string, timedOut?: boolean }}
  */
-export function runQuality(args, { cwd, timeoutMs }) {
+export function runQuality(args, { cwd, timeoutMs, env = {} }) {
   const runner = resolve(import.meta.dirname, '..', '..', 'bin', 'quality')
   try {
     const output = execFileSync(process.execPath, [runner, ...args], {
       cwd,
       encoding: 'utf8',
       timeout: timeoutMs,
-      env: { ...process.env, NO_COLOR: '1' },
+      env: { ...process.env, ...env, NO_COLOR: '1' },
       stdio: ['ignore', 'pipe', 'pipe'],
     })
     return { code: 0, output }

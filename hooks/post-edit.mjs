@@ -13,9 +13,34 @@
  * Änderung stammen — die Meldung sagt das dazu.
  */
 import { exitAfterFlush } from '../lib/exit.mjs'
+import { SYNC_TIMEOUT_ENV } from '../lib/mutagen.mjs'
+import { DDEV_TIMEOUT_ENV } from '../lib/tools.mjs'
 import { findProjectRoot, readHookInput, relativeToRoot, runQuality } from './lib/hook-io.mjs'
 
 const TIMEOUT_MS = 8000
+
+/**
+ * Grenze für einen Mutagen-Sync im ddev-Container. Ein Sync dauert sonst
+ * rund 0,6 s. Hängt Mutagen, scheitert der erste Schritt nach 3 s mit dem
+ * Hinweis auf `ddev mutagen reset`, und jeder weitere sofort. Das passt in
+ * TIMEOUT_MS. Siehe lib/mutagen.mjs.
+ */
+const SYNC_TIMEOUT_MS = 3000
+
+/**
+ * Grenze für eine Abfrage an ddev, etwa describe oder ls im Container.
+ * Gemessen: rund 0,3 s. Hängt ddev, scheitert der Lauf nach 2 s mit
+ * «ddev antwortet nicht». Weitere Abfragen entfallen dann.
+ *
+ * Hängt ein Aufruf, endet der Lauf nach dessen Grenze: 2 s bei ddev, 3 s
+ * beim Sync. Ein Lauf ohne Störung kostet rund 2 s.
+ *
+ * Grenzfall: Jeder Aufruf ist langsam, bleibt aber knapp unter seiner Grenze.
+ * describe, ls und die Linter-Version je 2 s, zwei Syncs je 3 s ergeben 12 s.
+ * Das liegt unter den 15 s aus hooks.json, aber über TIMEOUT_MS. Der Hook
+ * lässt dann still durch.
+ */
+const DDEV_TIMEOUT_MS = 2000
 
 const input = await readHookInput()
 const filePath = input?.tool_input?.file_path
@@ -33,6 +58,10 @@ if (!relativePath) process.exit(0) // Datei liegt ausserhalb des Projekts.
 const { code, output, timedOut } = runQuality(['fix', '--files', relativePath], {
   cwd: root,
   timeoutMs: TIMEOUT_MS,
+  env: {
+    [SYNC_TIMEOUT_ENV]: String(SYNC_TIMEOUT_MS),
+    [DDEV_TIMEOUT_ENV]: String(DDEV_TIMEOUT_MS),
+  },
 })
 
 if (timedOut || code === 0) process.exit(0)
