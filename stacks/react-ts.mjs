@@ -4,9 +4,12 @@ import { dirname, join } from 'node:path'
 import {
   JS_LOCKFILES,
   LINT_STRICT_FLAG,
+  containerNodeModules,
   failingCommand,
   findBinary,
+  findDdevRoot,
   hasOnPath,
+  hostInstalled,
   jsCommand,
   lintStrictArgs,
   missingToolHint,
@@ -60,38 +63,46 @@ function installCommand(ctx) {
  * kaputte Umgebung, keine Entscheidung des Projekts. Der Schritt scheitert
  * deshalb und sagt, wie man installiert.
  *
- * Installiert heisst: mindestens eine deklarierte Abhängigkeit liegt in
- * node_modules der Komponente oder der Repo-Wurzel. Ein Ordner node_modules
- * allein genügt nicht. In der Wurzel liegen sonst oft nur deren eigene
- * Werkzeuge, etwa husky, und das Skript der Komponente endet wieder mit
- * exit 127. Yarn Plug'n'Play legt nie node_modules an; dort zählt .pnp.cjs.
+ * Installiert heisst: auf dem Host (siehe hostInstalled) oder im laufenden
+ * ddev-Container. rankscan-website legt node_modules nur im Container an.
+ * Ein npm ci auf dem Host störte dort die Linux-Bindings nicht, wäre aber
+ * eine zweite, unnötige Installation. Die Schritte laufen dann im Container.
  *
  * Fehlt nur ein einzelnes Werkzeug, bleibt es beim Skip: dann nutzt das
- * Projekt es nicht. Ein package.json ohne Abhängigkeiten braucht kein
- * node_modules.
+ * Projekt es nicht.
  *
  * @param {StackContext} ctx
  * @param {string} name
  * @returns {Step | null}
  */
 function uninstalledStep(ctx, name) {
-  const manifest = readJson(join(ctx.dir, 'package.json'))
-  const deps = Object.keys({ ...manifest?.dependencies, ...manifest?.devDependencies })
-  if (deps.length === 0) return null
-  const bases = [ctx.dir, ctx.root].filter(Boolean)
-  const installed = bases.some(
-    (base) =>
-      existsSync(join(base, '.pnp.cjs')) ||
-      deps.some((dep) => existsSync(join(base, 'node_modules', dep))),
-  )
-  if (installed) return null
+  if (hostInstalled(ctx.dir, ctx.root)) return null
+  if (containerNodeModules(ctx.dir, ctx.root)?.installed) return null
+  const ddev = findDdevRoot(ctx.dir)
+    ? `Liegt node_modules nur im ddev-Container, starte das Projekt mit:  ddev start\n`
+    : ''
   return {
     name: `${name} (${ctx.component.path})`,
     ...failingCommand(
-      `node_modules fehlt (${ctx.component.path}).\nInstallieren mit:  ${installCommand(ctx)}\n`,
+      `node_modules fehlt (${ctx.component.path}).\nInstallieren mit:  ${installCommand(ctx)}\n${ddev}`,
     ),
     cwd: ctx.dir,
   }
+}
+
+/**
+ * Findet ein JS-Werkzeug auf dem Host oder, wenn node_modules nur dort liegt,
+ * im ddev-Container. Der Container wird nur befragt, wenn der Host nichts
+ * installiert hat.
+ *
+ * @param {string} name
+ * @param {StackContext} ctx
+ * @returns {string | null}
+ */
+function jsBinary(name, ctx) {
+  const host = findBinary(name, { dir: ctx.dir, root: ctx.root, kind: 'js' })
+  if (host || hostInstalled(ctx.dir, ctx.root)) return host
+  return containerNodeModules(ctx.dir, ctx.root)?.bin(name) ?? null
 }
 
 /**
@@ -233,6 +244,11 @@ function atLeast(version, minimum) {
  * Mit .eslintrc bricht eslint bei der Option ab (geprüft mit 8.57.1 und 9.39.5).
  * Ist die Lage unklar, gilt nein: dann bleibt der Aufruf wie bisher.
  *
+ * Liegt eslint nur im ddev-Container, ist die Version auf dem Host unbekannt.
+ * Dann entscheidet die Konfigurationsdatei eslint.config.*. Ein eslint vor
+ * 8.57 mit Flat Config bräche an der Option ab. Den Fall gibt es in keinem
+ * Standout-Projekt; er wäre ein roter Schritt, kein still grüner.
+ *
  * @param {string} bin
  * @param {StackContext} ctx
  */
@@ -241,8 +257,8 @@ function eslintUsesFlatConfig(bin, ctx) {
   if (env === 'false') return false
   const version = packageVersion(bin, 'eslint')
   if (atLeast(version, [9, 0, 0])) return true
-  if (!atLeast(version, [8, 57, 0])) return false
-  if (env === 'true') return true
+  if (version && !atLeast(version, [8, 57, 0])) return false
+  if (version && env === 'true') return true
   return [ctx.dir, ctx.root].some(
     (base) =>
       base &&
@@ -349,7 +365,7 @@ export default {
   fmt(ctx) {
     const uninstalled = uninstalledStep(ctx, 'prettier')
     if (uninstalled) return uninstalled
-    const tool = findBinary('prettier', { dir: ctx.dir, root: ctx.root, kind: 'js' })
+    const tool = jsBinary('prettier', ctx)
     if (!tool) return { name: 'prettier', skip: missingToolHint('prettier', 'js') }
     const { paths: excluded, problem } = excludedByGit(ctx.dir)
     // Ein Eintrag mit "/" am Ende steht für den ganzen Ordner.
@@ -401,7 +417,7 @@ export default {
     ]
     for (const [tool, fallbackArgs] of linters) {
       if (needsEslint && tool === 'oxlint') continue
-      const bin = findBinary(tool, { dir: ctx.dir, root: ctx.root, kind: 'js' })
+      const bin = jsBinary(tool, ctx)
       if (bin) {
         const name = `${tool} (${ctx.component.path})`
         const run = wantsFiles && ctx.files ? LINT_FILE_RUN[tool](bin, ctx, ctx.files) : null
@@ -424,7 +440,7 @@ export default {
       }
     }
 
-    if (needsEslint && findBinary('oxlint', { dir: ctx.dir, root: ctx.root, kind: 'js' })) {
+    if (needsEslint && jsBinary('oxlint', ctx)) {
       return {
         name: `oxlint (${ctx.component.path})`,
         ...failingCommand(
@@ -444,7 +460,7 @@ export default {
   types(ctx) {
     const uninstalled = uninstalledStep(ctx, 'tsc')
     if (uninstalled) return uninstalled
-    const tool = findBinary('tsc', { dir: ctx.dir, root: ctx.root, kind: 'js' })
+    const tool = jsBinary('tsc', ctx)
     if (!tool) return { name: 'tsc', skip: missingToolHint('tsc', 'js') }
     // Projektreferenzen (tsconfig.app.json / tsconfig.node.json) brauchen den
     // Build-Modus; ohne sie genügt --noEmit auf der Wurzelkonfiguration.
@@ -475,7 +491,7 @@ export default {
     }
     const uninstalled = uninstalledStep(ctx, 'tests')
     if (uninstalled) return uninstalled
-    const vitest = findBinary('vitest', { dir: ctx.dir, root: ctx.root, kind: 'js' })
+    const vitest = jsBinary('vitest', ctx)
     if (vitest) {
       // Im Datei-Lauf fährt vitest nur die Tests, die von den Dateien abhängen.
       // Dafür gibt es den Befehl related, --run schaltet den Watch-Modus ab.
