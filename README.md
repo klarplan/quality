@@ -38,14 +38,14 @@ an.
 JS/TS-Projekt:
 
 ```bash
-npm  install -D github:renestandout/quality#v0.2.35 prettier
-pnpm add     -D github:renestandout/quality#v0.2.35 prettier
+npm  install -D github:renestandout/quality#v0.2.36 prettier
+pnpm add     -D github:renestandout/quality#v0.2.36 prettier
 ```
 
 Python-Projekt — über npm, mit einer `package.json`, die nur dafür da ist:
 
 ```bash
-npm install -D github:renestandout/quality#v0.2.35
+npm install -D github:renestandout/quality#v0.2.36
 pip  install ruff mypy pytest pip-audit
 ```
 
