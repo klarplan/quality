@@ -144,6 +144,7 @@ export default {
       name: `pint${ctx.check ? ' (prüfend)' : ''} (${ctx.component.path})`,
       ...phpCommand(tool, args, ctx.dir),
       cwd: ctx.dir,
+      writes: !ctx.check,
     }
   },
 

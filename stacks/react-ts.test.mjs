@@ -13,6 +13,7 @@ import {
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
+import { runStep as runnerStep } from '../lib/run.mjs'
 import reactTs from './react-ts.mjs'
 
 /** @import { StackContext } from '../lib/types.mjs' */
@@ -94,6 +95,15 @@ function fmtArgs(ctx) {
   assert.ok(step && 'args' in step && step.args, 'fmt liefert einen ausführbaren Schritt')
   return step.args
 }
+
+test('fmt: --write schreibt, --check nicht', (t) => {
+  // Im ddev-Container mit Mutagen synct der Runner nach einem schreibenden Schritt.
+  const dir = repo()
+  t.after(() => rmSync(dir, { recursive: true, force: true }))
+
+  assert.equal(reactTs.fmt?.(context(dir, { check: false }))?.writes, true)
+  assert.equal(reactTs.fmt?.(context(dir))?.writes, false)
+})
 
 test('fmt: eine Datei aus info/exclude fällt aus der Prüfung der ganzen Fläche', (t) => {
   // Das Board legt WORKER.md in jedem Worktree an und schliesst sie nur über
@@ -473,13 +483,14 @@ function ddevProject({ platform, scripts = { build: 'vite build' } }) {
  * - approot: ein fremder Pfad, wie beim Projekt des Haupt-Checkouts.
  * - warn: eine Zeile vor dem JSON, wie sie ein pre-exec-Hook ausgibt.
  * - listing: die Ausgabe von "ls" im Container.
+ * - mutagen: ddev meldet mutagen_enabled, wie rankscan-website.
  *
  * @param {import('node:test').TestContext} t
  * @param {string} status
- * @param {{ approot?: string, warn?: string, listing?: string }} [options]
+ * @param {{ approot?: string, warn?: string, listing?: string, mutagen?: boolean }} [options]
  * @returns {{ calls: () => string[] }}
  */
-function fakeDdev(t, status, { approot, warn, listing } = {}) {
+function fakeDdev(t, status, { approot, warn, listing, mutagen = false } = {}) {
   const bin = mkdtempSync(join(tmpdir(), 'quality-fake-ddev-'))
   const log = join(bin, 'calls.log')
   // Ohne cat: der PATH enthält nur dieses Verzeichnis, also nur Builtins.
@@ -493,7 +504,8 @@ echo "$*" >> "${log}"
 case "$1" in
   describe)
     ${warn ? `echo "${warn}"` : ':'}
-    printf '{"level":"info","msg":"","raw":{"status":"${status}","approot":"%s"}}\\n' "${root}" ;;
+    printf '{"level":"info","msg":"","raw":{"status":"${status}","approot":"%s","mutagen_enabled":${mutagen}}}\\n' "${root}" ;;
+  mutagen) ;;
   exec)
     case "$*" in
       *" -- ls "*) if [ -f "${listingFile}" ]; then while IFS= read -r l; do echo "$l"; done < "${listingFile}"; else exit 2; fi ;;
@@ -750,6 +762,34 @@ for (const [verb, rest] of /** @type {const} */ ([
     assert.deepEqual(step?.args, [...IN_CONTAINER, ...rest])
   })
 }
+
+test('fmt: ddev mit Mutagen — prettier --write synct vor und nach dem Lauf', async (t) => {
+  // rankscan-website, 16.11.2026: ohne Sync zeigte git diff die Datei nach
+  // quality fix weiter unformatiert.
+  const host = fakeDdev(t, 'running', { listing: CONTAINER_LISTING, mutagen: true })
+  const dir = containerOnly(t)
+
+  const step = reactTs.fmt?.(context(dir, { files: ['app.js'], check: false }))
+  assert.ok(step)
+  assert.equal(step.mutagen, dir)
+  assert.equal(step.writes, true)
+
+  const result = await runnerStep(step, { quiet: true })
+  assert.equal(result.code, 0, result.output)
+  const order = host
+    .calls()
+    .filter((c) => !c.startsWith('describe') && !c.includes(' -- ls '))
+    .map((c) => (c.startsWith('exec') ? c.split(' -- ')[1]?.split(' ')[0] : c))
+  assert.deepEqual(order, ['mutagen sync', 'node_modules/.bin/prettier', 'mutagen sync'])
+})
+
+test('fmt: ddev ohne Mutagen — kein Sync', (t) => {
+  fakeDdev(t, 'running', { listing: CONTAINER_LISTING })
+  const dir = containerOnly(t)
+
+  const step = reactTs.fmt?.(context(dir, { files: ['app.js'], check: false }))
+  assert.equal(step?.mutagen, undefined)
+})
 
 test('build: node_modules nur im Container — das npm-Skript läuft im Container', (t) => {
   fakeDdev(t, 'running', { listing: CONTAINER_LISTING })

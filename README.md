@@ -21,6 +21,13 @@ Pint und PHPStan laufen im ddev-Container, wenn das Projekt eine
 dort PHP und ddev ist gestoppt, meldet der Schritt `ddev start`. Der Runner
 startet ddev nie selbst.
 
+Nutzt ddev Mutagen (`performance_mode: mutagen`), ruft der Runner vor dem
+ersten Schritt im Container `ddev mutagen sync` auf. Nach einem schreibenden
+Schritt wie `pint` oder `prettier --write` folgt ein zweiter Sync. Ohne Sync
+prüft der Container einen alten Stand, und der Host sieht die Formatierung
+nicht. Scheitert ein Sync, ist der Schritt rot und nennt `ddev mutagen reset`.
+Der Status «problems» aus `ddev describe` allein hält den Lauf nicht an.
+
 JS/TS-Projekt:
 
 ```bash

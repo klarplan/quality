@@ -51,10 +51,10 @@ function project({ ddev = true, component = '.' } = {}) {
  * Arbeitsverzeichnis des Aufrufs, wie bei einem eigenen ddev-Projekt.
  *
  * @param {import('node:test').TestContext} t
- * @param {{ status: string, php?: boolean, approot?: string }} options
+ * @param {{ status: string, php?: boolean, approot?: string, mutagen?: boolean }} options
  * @returns {{ calls: () => string[] }}
  */
-function fakeHost(t, { status, php = false, approot }) {
+function fakeHost(t, { status, php = false, approot, mutagen = false }) {
   const bin = mkdtempSync(join(tmpdir(), 'quality-fake-ddev-'))
   const log = join(bin, 'calls.log')
   writeFileSync(
@@ -62,7 +62,8 @@ function fakeHost(t, { status, php = false, approot }) {
     `#!/bin/sh
 echo "$*" >> "${log}"
 case "$1" in
-  describe) printf '{"level":"info","msg":"","raw":{"status":"${status}","approot":"%s"}}\\n' "${approot ?? '$(pwd -P)'}" ;;
+  describe) printf '{"level":"info","msg":"","raw":{"status":"${status}","approot":"%s","mutagen_enabled":${mutagen}}}\\n' "${approot ?? '$(pwd -P)'}" ;;
+  mutagen) ;;
   exec) echo "im Container: $*" ;;
 esac
 `,
@@ -169,6 +170,58 @@ test('phpstan: läuft ddev, ruft der Adapter phpstan im Container auf', (t) => {
     'analyse',
   ])
   assert.equal(step.args?.at(-1), 'app/Models/User.php')
+})
+
+test('pint: ddev mit Mutagen — der Schritt nennt das ddev-Projekt für den Sync', (t) => {
+  fakeHost(t, { status: 'running', mutagen: true })
+  const where = project({ component: 'backend' })
+  t.after(() => rmSync(where.root, { recursive: true, force: true }))
+
+  const step = runnable(laravel.fmt?.(context(where)))
+  assert.equal(step.mutagen, where.root)
+})
+
+test('pint: ddev ohne Mutagen — kein Sync', (t) => {
+  fakeHost(t, { status: 'running' })
+  const where = project()
+  t.after(() => rmSync(where.root, { recursive: true, force: true }))
+
+  const step = runnable(laravel.fmt?.(context(where)))
+  assert.equal(step.mutagen, undefined)
+})
+
+test('pint: ohne --test schreibt der Schritt, mit --test nicht', (t) => {
+  fakeHost(t, { status: 'running', mutagen: true })
+  const where = project()
+  t.after(() => rmSync(where.root, { recursive: true, force: true }))
+
+  assert.equal(runnable(laravel.fmt?.(context(where, { check: false }))).writes, true)
+  assert.equal(runnable(laravel.fmt?.(context(where))).writes, false)
+})
+
+test('pint: mit Mutagen synct der Runner vor und nach dem Schreiben', async (t) => {
+  const host = fakeHost(t, { status: 'running', mutagen: true })
+  const where = project()
+  t.after(() => rmSync(where.root, { recursive: true, force: true }))
+
+  const step = runnable(laravel.fmt?.(context(where, { check: false })))
+  const result = await runStep(step, { quiet: true })
+
+  assert.equal(result.code, 0, result.output)
+  assert.deepEqual(
+    host.calls().map((c) => c.split(' ')[0]),
+    ['describe', 'mutagen', 'exec', 'mutagen'],
+  )
+})
+
+test('phpstan: ddev mit Mutagen — der Schritt nennt das ddev-Projekt für den Sync', (t) => {
+  fakeHost(t, { status: 'running', mutagen: true })
+  const where = project()
+  t.after(() => rmSync(where.root, { recursive: true, force: true }))
+
+  const step = runnable(laravel.types?.(context(where)))
+  assert.equal(step.mutagen, where.root)
+  assert.ok(!step.writes)
 })
 
 test('pint: ddev gestoppt und kein PHP auf dem Host — klare Meldung statt exit 127', async (t) => {
