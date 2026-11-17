@@ -54,11 +54,14 @@ add-apt-repository -y ppa:ondrej/php >/dev/null
 apt-get update -qq
 # Extensions aus den Quality-Workflows (pdo_pgsql steckt im pgsql-Paket).
 # xml und curl dazu: composer und Laravel brauchen beide.
+# sqlite3 dazu: Die calcup-Tests laufen gegen SQLite :memory:. Ohne das Paket
+# scheitert jeder Feature-Test mit "could not find driver". Auf der VM hatten
+# 8.3 und 8.4 SQLite nur über Dateien ausserhalb von dpkg (Befund 17.11.2026).
 for v in 8.3 8.4 8.5; do
   apt-get install -y -qq \
     "php${v}-cli" "php${v}-pgsql" "php${v}-redis" "php${v}-intl" \
     "php${v}-mbstring" "php${v}-bcmath" "php${v}-zip" "php${v}-gd" \
-    "php${v}-xml" "php${v}-curl"
+    "php${v}-xml" "php${v}-curl" "php${v}-sqlite3"
 done
 update-alternatives --set php /usr/bin/php8.4
 

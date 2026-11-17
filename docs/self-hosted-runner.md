@@ -105,7 +105,10 @@ lagen dort zusätzlich `php-fpm8.3/8.4`, `php-cgi8.3/8.4` und
 `libphp8.3/8.4.so` für Apache. Beide FPM-Dienste liefen seit dem 19.08.2026.
 Kein dpkg-Paket führt diese Dateien, und das dpkg-Log kennt ihre Installation
 nicht. Build-Zeit und Version gleichen den sury-CLI-Paketen. Vermutlich hat
-`setup-php` sie installiert. Belegt ist das nicht.
+`setup-php` sie installiert. Belegt ist das nicht. Dasselbe gilt für SQLite:
+Am 17.11.2026 luden 8.3 und 8.4 `pdo_sqlite` und `sqlite3`, ohne dass ein
+Paket `php8.x-sqlite3` installiert war. Seither installiert `provision.sh`
+das Paket für jede Version.
 
 Kein Workflow braucht FPM, und kein Webserver läuft. Wegen CVE-2026-109618
 und CVE-2026-109619 sind `php8.3-fpm` und `php8.4-fpm` seit dem 21.10.2026
