@@ -96,7 +96,7 @@ scp runner/provision.sh runner/register.sh root@<vm>:
 ssh root@<vm> 'bash provision.sh'
 ```
 
-`provision.sh` installiert: 2 GB Swap, Docker, PHP 8.3+8.4 mit den
+`provision.sh` installiert: 2 GB Swap, Docker, PHP 8.3, 8.4 und 8.5 mit den
 Workflow-Extensions, composer, shellcheck, den User `runner`.
 Node installiert `actions/setup-node` je Lauf selbst (respektiert `.nvmrc`).
 
@@ -106,6 +106,22 @@ lagen dort zusätzlich `php-fpm8.3/8.4`, `php-cgi8.3/8.4` und
 Kein dpkg-Paket führt diese Dateien, und das dpkg-Log kennt ihre Installation
 nicht. Build-Zeit und Version gleichen den sury-CLI-Paketen. Vermutlich hat
 `setup-php` sie installiert. Belegt ist das nicht.
+
+Auch SQLite liegt für 8.3 und 8.4 ausserhalb von dpkg. Am 17.11.2026 luden
+8.3 und 8.4 `pdo_sqlite` und `sqlite3`, ohne dass ein Paket `php8.x-sqlite3`
+installiert war. Seither installiert `provision.sh` das Paket für jede Version.
+
+**Auf der bestehenden VM installierst du nur neue Pakete einzeln.** Führe
+`provision.sh` dort nicht erneut aus. Ein neuer Lauf installiert
+`php8.3-sqlite3` und `php8.4-sqlite3` über die Dateien ausserhalb von dpkg.
+Ob dpkg die vorhandenen ini-Dateien dabei behält oder ersetzt, ist nicht
+geprüft. PHP 8.5 kam am 17.11.2026 so auf die VM, während kein Job lief:
+
+```bash
+ssh root@<vm> 'ps -eo cmd | grep "[R]unner\.Worker" || echo "kein Job aktiv"'
+ssh root@<vm> "apt-get install -y php8.5-{cli,pgsql,redis,intl,mbstring,bcmath,zip,gd,xml,curl,sqlite3}"
+ssh root@<vm> 'php8.5 -v | head -1; readlink -f /usr/bin/php'
+```
 
 Kein Workflow braucht FPM, und kein Webserver läuft. Wegen CVE-2026-109618
 und CVE-2026-109619 sind `php8.3-fpm` und `php8.4-fpm` seit dem 21.10.2026
@@ -118,8 +134,8 @@ ein.
 
 ```bash
 ssh root@<vm> 'ps -eo cmd | grep "[R]unner\.Worker" || echo "kein Job aktiv"'
-ssh root@<vm> "apt-get update && apt-get install --only-upgrade 'php8.3-*' 'php8.4-*'"
-ssh root@<vm> 'php8.3 -v | head -1; php8.4 -v | head -1'
+ssh root@<vm> "apt-get update && apt-get install --only-upgrade 'php8.3-*' 'php8.4-*' 'php8.5-*'"
+ssh root@<vm> 'php8.3 -v | head -1; php8.4 -v | head -1; php8.5 -v | head -1'
 ```
 
 Am 21.10.2026 kamen PHP 8.4.27 und 8.3.36 nicht über apt. Die PPA hatte die
