@@ -125,8 +125,8 @@ ssh root@<vm> 'php8.4 --re pdo_sqlite | head -1; dpkg -S /usr/lib/php/20240924/p
 dpkg überschreibt .so-Dateien ohne Rückfrage, wenn kein Paket sie führt.
 Die ini-Dateien in `mods-available` waren byte-gleich mit denen aus dem
 Paket. ucf behielt sie wegen `UCF_FORCE_CONFFOLD=1` und registrierte sie für
-das Paket. Daneben legte ucf vier identische `*.ini.ucf-dist` ab. Die Kopien
-schaden nicht. Die Sicherung von `/etc/php` und der alten .so-Dateien liegt
+das Paket. Daneben legte ucf vier identische `*.ini.ucf-dist` ab. Sie sind
+seit dem 17.11.2026 gelöscht. Die Sicherung von `/etc/php` und der alten .so-Dateien liegt
 in `/root/backup-php-sqlite-20261117/`.
 
 **Auf der bestehenden VM installierst du nur neue Pakete einzeln.** Führe
