@@ -96,7 +96,7 @@ scp runner/provision.sh runner/register.sh root@<vm>:
 ssh root@<vm> 'bash provision.sh'
 ```
 
-`provision.sh` installiert: 2 GB Swap, Docker, PHP 8.3+8.4 mit den
+`provision.sh` installiert: 2 GB Swap, Docker, PHP 8.3, 8.4 und 8.5 mit den
 Workflow-Extensions, composer, shellcheck, den User `runner`.
 Node installiert `actions/setup-node` je Lauf selbst (respektiert `.nvmrc`).
 
@@ -118,8 +118,8 @@ ein.
 
 ```bash
 ssh root@<vm> 'ps -eo cmd | grep "[R]unner\.Worker" || echo "kein Job aktiv"'
-ssh root@<vm> "apt-get update && apt-get install --only-upgrade 'php8.3-*' 'php8.4-*'"
-ssh root@<vm> 'php8.3 -v | head -1; php8.4 -v | head -1'
+ssh root@<vm> "apt-get update && apt-get install --only-upgrade 'php8.3-*' 'php8.4-*' 'php8.5-*'"
+ssh root@<vm> 'php8.3 -v | head -1; php8.4 -v | head -1; php8.5 -v | head -1'
 ```
 
 Am 21.10.2026 kamen PHP 8.4.27 und 8.3.36 nicht über apt. Die PPA hatte die

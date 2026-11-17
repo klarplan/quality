@@ -7,7 +7,7 @@
 # Was danach vorhanden ist:
 #   - 2 GB Swap
 #   - Docker (für services:-Container wie postgres/redis)
-#   - PHP 8.3 und 8.4 CLI mit den Extensions der Quality-Workflows
+#   - PHP 8.3, 8.4 und 8.5 CLI mit den Extensions der Quality-Workflows
 #   - composer, git, curl, jq, unzip
 #   - User "runner" (kein sudo, Mitglied der docker-Gruppe)
 #
@@ -49,12 +49,12 @@ https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_C
   apt-get install -y -qq docker-ce docker-ce-cli containerd.io docker-compose-plugin
 fi
 
-echo "==> PHP 8.3 + 8.4"
+echo "==> PHP 8.3 + 8.4 + 8.5"
 add-apt-repository -y ppa:ondrej/php >/dev/null
 apt-get update -qq
 # Extensions aus den Quality-Workflows (pdo_pgsql steckt im pgsql-Paket).
 # xml und curl dazu: composer und Laravel brauchen beide.
-for v in 8.3 8.4; do
+for v in 8.3 8.4 8.5; do
   apt-get install -y -qq \
     "php${v}-cli" "php${v}-pgsql" "php${v}-redis" "php${v}-intl" \
     "php${v}-mbstring" "php${v}-bcmath" "php${v}-zip" "php${v}-gd" \
