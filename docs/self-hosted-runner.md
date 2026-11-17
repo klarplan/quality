@@ -107,15 +107,31 @@ Kein dpkg-Paket führt diese Dateien, und das dpkg-Log kennt ihre Installation
 nicht. Build-Zeit und Version gleichen den sury-CLI-Paketen. Vermutlich hat
 `setup-php` sie installiert. Belegt ist das nicht.
 
-Auch SQLite liegt für 8.3 und 8.4 ausserhalb von dpkg. Am 17.11.2026 luden
-8.3 und 8.4 `pdo_sqlite` und `sqlite3`, ohne dass ein Paket `php8.x-sqlite3`
-installiert war. Seither installiert `provision.sh` das Paket für jede Version.
+Auch SQLite lag für 8.3 und 8.4 ausserhalb von dpkg. Die Dateien stammten
+vom 29.07.2026 und hatten die Version 8.3.33 und 8.4.24. Das CVE-Update vom
+21.10.2026 hatte sie also nicht erreicht. Seit dem 17.11.2026 führt dpkg sie
+über `php8.3-sqlite3` (8.3.36) und `php8.4-sqlite3` (8.4.27).
+`provision.sh` installiert das Paket für jede Version.
+
+Am 17.11.2026 nutzte nur adboard SQLite unter 8.4 (Tests im Arbeitsspeicher).
+Kein Workflow nutzte PHP 8.3. Die Installation lief so, während kein Job lief:
+
+```bash
+ssh root@<vm> 'ps -eo cmd | grep "[R]unner\.Worker" || echo "kein Job aktiv"'
+ssh root@<vm> "DEBIAN_FRONTEND=noninteractive UCF_FORCE_CONFFOLD=1 apt-get install -y php8.3-sqlite3=8.3.36-1+ubuntu24.04.1+deb.sury.org+1 php8.4-sqlite3=8.4.27-1+ubuntu24.04.1+deb.sury.org+1"
+ssh root@<vm> 'php8.4 --re pdo_sqlite | head -1; dpkg -S /usr/lib/php/20240924/pdo_sqlite.so'
+```
+
+dpkg überschreibt .so-Dateien ohne Rückfrage, wenn kein Paket sie führt.
+Die ini-Dateien in `mods-available` waren byte-gleich mit denen aus dem
+Paket. ucf behielt sie wegen `UCF_FORCE_CONFFOLD=1` und registrierte sie für
+das Paket. Daneben legte ucf vier identische `*.ini.ucf-dist` ab. Die Kopien
+schaden nicht. Die Sicherung von `/etc/php` und der alten .so-Dateien liegt
+in `/root/backup-php-sqlite-20261117/`.
 
 **Auf der bestehenden VM installierst du nur neue Pakete einzeln.** Führe
-`provision.sh` dort nicht erneut aus. Ein neuer Lauf installiert
-`php8.3-sqlite3` und `php8.4-sqlite3` über die Dateien ausserhalb von dpkg.
-Ob dpkg die vorhandenen ini-Dateien dabei behält oder ersetzt, ist nicht
-geprüft. PHP 8.5 kam am 17.11.2026 so auf die VM, während kein Job lief:
+`provision.sh` dort nicht erneut aus. PHP 8.5 kam am 17.11.2026 so auf die
+VM, während kein Job lief:
 
 ```bash
 ssh root@<vm> 'ps -eo cmd | grep "[R]unner\.Worker" || echo "kein Job aktiv"'
