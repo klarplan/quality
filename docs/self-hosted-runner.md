@@ -107,15 +107,45 @@ Kein dpkg-Paket führt diese Dateien, und das dpkg-Log kennt ihre Installation
 nicht. Build-Zeit und Version gleichen den sury-CLI-Paketen. Vermutlich hat
 `setup-php` sie installiert. Belegt ist das nicht.
 
-Auch SQLite liegt für 8.3 und 8.4 ausserhalb von dpkg. Am 17.11.2026 luden
-8.3 und 8.4 `pdo_sqlite` und `sqlite3`, ohne dass ein Paket `php8.x-sqlite3`
-installiert war. Seither installiert `provision.sh` das Paket für jede Version.
+Auch SQLite lag für 8.3 und 8.4 ausserhalb von dpkg. Die Dateien stammten
+vom 29.07.2026 und hatten die Version 8.3.33 und 8.4.24. Das CVE-Update vom
+21.10.2026 hatte diese Dateien also nicht erreicht. Seit dem 17.11.2026 führt
+dpkg die Dateien über `php8.3-sqlite3` (8.3.36) und `php8.4-sqlite3` (8.4.27).
+`provision.sh` installiert das Paket für jede Version.
+
+Am 17.11.2026 nutzte nur adboard SQLite unter 8.4 (Tests im Arbeitsspeicher).
+Kein Workflow nutzte PHP 8.3. Die Installation lief in drei Schritten.
+Sichere zuerst `/etc/php` und die .so-Dateien:
+
+```bash
+ssh root@<vm> 'B=/root/backup-php-sqlite-$(date +%Y%m%d); mkdir -p $B; tar czf $B/etc-php.tgz -C / etc/php; tar czf $B/sqlite-so.tgz -C / usr/lib/php/20230831/{pdo_sqlite,sqlite3}.so usr/lib/php/20240924/{pdo_sqlite,sqlite3}.so'
+```
+
+Installiere dann in einem einzigen Aufruf. Der Aufruf wartet, bis kein Job
+läuft. Die Version jedes Pakets übernimmt er von `php8.x-cli`:
+
+```bash
+ssh root@<vm> 'while ps -eo cmd | grep -q "[R]unner\.Worker"; do echo "Job aktiv, warte"; sleep 30; done; apt-get update -qq && DEBIAN_FRONTEND=noninteractive UCF_FORCE_CONFFOLD=1 apt-get install -y "php8.3-sqlite3=$(dpkg-query -W -f="\${Version}" php8.3-cli)" "php8.4-sqlite3=$(dpkg-query -W -f="\${Version}" php8.4-cli)"'
+```
+
+Prüfe danach beide Versionen und beide Extensions:
+
+```bash
+ssh root@<vm> 'for v in 8.3 8.4; do php$v -v | head -1; php$v --re pdo_sqlite | head -1; php$v --re sqlite3 | head -1; done; dpkg -S /usr/lib/php/20230831/{pdo_sqlite,sqlite3}.so /usr/lib/php/20240924/{pdo_sqlite,sqlite3}.so'
+```
+
+dpkg überschreibt .so-Dateien ohne Rückfrage, wenn kein Paket sie führt.
+Die ini-Dateien in `mods-available` waren byte-gleich mit denen aus dem
+Paket. ucf behielt die ini-Dateien wegen `UCF_FORCE_CONFFOLD=1` und
+registrierte sie für das Paket. Daneben legte ucf vier identische
+`*.ini.ucf-dist` ab. Am 17.11.2026 haben wir die vier Kopien gelöscht.
+Die Sicherung vom 17.11.2026 liegt in `/root/backup-php-sqlite-20261117/`.
 
 **Auf der bestehenden VM installierst du nur neue Pakete einzeln.** Führe
-`provision.sh` dort nicht erneut aus. Ein neuer Lauf installiert
-`php8.3-sqlite3` und `php8.4-sqlite3` über die Dateien ausserhalb von dpkg.
-Ob dpkg die vorhandenen ini-Dateien dabei behält oder ersetzt, ist nicht
-geprüft. PHP 8.5 kam am 17.11.2026 so auf die VM, während kein Job lief:
+`provision.sh` dort nicht erneut aus. Das Skript prüft nicht, ob ein Job
+läuft. `apt-get install` hebt dabei jedes installierte PHP-Paket auf die
+neueste Version der PPA, auch mitten in einem Job. PHP 8.5 kam am 17.11.2026
+so auf die VM, während kein Job lief:
 
 ```bash
 ssh root@<vm> 'ps -eo cmd | grep "[R]unner\.Worker" || echo "kein Job aktiv"'
