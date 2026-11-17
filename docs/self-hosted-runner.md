@@ -105,10 +105,23 @@ lagen dort zusätzlich `php-fpm8.3/8.4`, `php-cgi8.3/8.4` und
 `libphp8.3/8.4.so` für Apache. Beide FPM-Dienste liefen seit dem 19.08.2026.
 Kein dpkg-Paket führt diese Dateien, und das dpkg-Log kennt ihre Installation
 nicht. Build-Zeit und Version gleichen den sury-CLI-Paketen. Vermutlich hat
-`setup-php` sie installiert. Belegt ist das nicht. Dasselbe gilt für SQLite:
-Am 17.11.2026 luden 8.3 und 8.4 `pdo_sqlite` und `sqlite3`, ohne dass ein
-Paket `php8.x-sqlite3` installiert war. Seither installiert `provision.sh`
-das Paket für jede Version.
+`setup-php` sie installiert. Belegt ist das nicht.
+
+Auch SQLite liegt für 8.3 und 8.4 ausserhalb von dpkg. Am 17.11.2026 luden
+8.3 und 8.4 `pdo_sqlite` und `sqlite3`, ohne dass ein Paket `php8.x-sqlite3`
+installiert war. Seither installiert `provision.sh` das Paket für jede Version.
+
+**Auf der bestehenden VM installierst du nur neue Pakete einzeln.** Führe
+`provision.sh` dort nicht erneut aus. Ein neuer Lauf installiert
+`php8.3-sqlite3` und `php8.4-sqlite3` über die Dateien ausserhalb von dpkg.
+Ob dpkg die vorhandenen ini-Dateien dabei behält oder ersetzt, ist nicht
+geprüft. PHP 8.5 kam am 17.11.2026 so auf die VM, während kein Job lief:
+
+```bash
+ssh root@<vm> 'ps -eo cmd | grep "[R]unner\.Worker" || echo "kein Job aktiv"'
+ssh root@<vm> "apt-get install -y php8.5-{cli,pgsql,redis,intl,mbstring,bcmath,zip,gd,xml,curl,sqlite3}"
+ssh root@<vm> 'php8.5 -v | head -1; readlink -f /usr/bin/php'
+```
 
 Kein Workflow braucht FPM, und kein Webserver läuft. Wegen CVE-2026-109618
 und CVE-2026-109619 sind `php8.3-fpm` und `php8.4-fpm` seit dem 21.10.2026
