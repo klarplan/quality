@@ -811,11 +811,13 @@ Schritten, damit ein PR in einer Runde alles erfährt statt in zweien.
 Ein Punkt hängt am Runner-Typ statt am YAML: **PHPStans Cache liegt im
 System-Temp**, je Checkout in einem eigenen Ordner `phpstan-<hash>`. Unter
 Linux ist das `/tmp/phpstan-<hash>`, unter macOS der Ordner aus `$TMPDIR`.
-quality setzt dafür `TMPDIR` für PHPStan auf diesen Ordner. PHPStan 2.3.5
-speichert im Cache absolute Pfade in den Phar des Checkouts, der ihn schrieb.
-Mit einem gemeinsamen Cache brach PHPStan deshalb ab, sobald das Board einen
-anderen Worktree gelöscht hatte. Caches gelöschter Checkouts räumt quality
-beim nächsten Lauf weg. Ein neuer Worktree startet kalt. Auf `ubuntu-latest` ist der System-Temp bei jedem Lauf leer,
+quality setzt dafür `TMPDIR` für PHPStan auf diesen Ordner. Bis 2.3.5
+speicherte PHPStan im Cache absolute Pfade in den Phar des Checkouts, der ihn
+schrieb. Mit einem gemeinsamen Cache brach PHPStan deshalb ab, sobald das Board
+einen anderen Worktree gelöscht hatte (phpstan/phpstan#15607). PHPStan 2.3.6
+behebt diesen Fehler. Der eigene Cache bleibt trotzdem: Er trennt parallele
+Läufe, und ein Fehler im Cache trifft nur einen Checkout. Caches gelöschter
+Checkouts räumt quality beim nächsten Lauf weg. Ein neuer Worktree startet kalt. Auf `ubuntu-latest` ist der System-Temp bei jedem Lauf leer,
 die Analyse läuft also immer kalt — in rankscan/application 86s statt 6s. Dort
 lohnt `actions/cache` auf diesen Pfad; der Block steht auskommentiert in beiden
 Vorlagen. Auf einem self-hosted Runner ist er überflüssig, und ein
