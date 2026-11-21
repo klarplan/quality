@@ -196,6 +196,79 @@ test('phpunit.xml: ein Umgebungswert neben einem neuen exclude meldet weiter', (
   )
 })
 
+// Befund vom 21.11.2026 in looker-mautic-connector: ein zweizeiliger Kommentar
+// vor einer neuen <env>-Zeile meldete `protected.changed`.
+
+/**
+ * Wie `phpunitRules`, aber mit Zeilennummern. So entstehen Lücken zwischen
+ * hinzugefügten Zeilen, wie bei Zeilen um eine unveränderte Zeile herum.
+ *
+ * @param {[number, string][]} added
+ * @param {string[]} [removed]
+ */
+function phpunitRulesAt(added, removed = []) {
+  const file = {
+    path: 'phpunit.xml',
+    deleted: false,
+    added: added.map(([line, text]) => ({ line, text })),
+    removed: removed.map((text) => ({ text })),
+  }
+  return analyseDiff([file]).map((f) => f.rule)
+}
+
+test('phpunit.xml: ein zweizeiliger Kommentar vor einem Umgebungswert meldet nicht', () => {
+  assert.deepEqual(
+    phpunitRules([
+      '        <!-- Fester Testschlüssel: Die Tests laufen auch ohne .env, etwa im Worktree.',
+      '             Base64 von "phpunit-test-key-not-a-secret!!!" (32 Byte). -->',
+      '        <env name="APP_KEY" value="base64:cGhwdW5pdC10ZXN0LWtleS1ub3QtYS1zZWNyZXQhISE="/>',
+    ]),
+    [],
+  )
+})
+
+test('phpunit.xml: ein mehrzeiliger Umgebungswert meldet nicht', () => {
+  assert.deepEqual(
+    phpunitRules([
+      '        <env name="APP_KEY"',
+      '             value="base64:abc"',
+      '             force="true"/>',
+    ]),
+    [],
+  )
+})
+
+test('phpunit.xml: neue Kommentarzeilen um ein bestehendes directory melden weiter', () => {
+  assert.deepEqual(
+    phpunitRulesAt([
+      [5, '            <!--'],
+      [7, '            -->'],
+    ]),
+    ['protected.changed'],
+  )
+})
+
+test('phpunit.xml: ein auskommentiertes directory meldet weiter', () => {
+  assert.deepEqual(
+    phpunitRules(
+      ['            <!-- <directory>tests/Feature</directory> -->'],
+      ['            <directory>tests/Feature</directory>'],
+    ),
+    ['protected.changed'],
+  )
+})
+
+test('phpunit.xml: ein offener Kommentar ohne Schluss meldet weiter', () => {
+  assert.deepEqual(
+    phpunitRules(['        <!-- Ab hier still:', '        <env name="X" value="1"/>']),
+    ['protected.changed'],
+  )
+})
+
+test('phpunit.xml: eine aufgehobene Auskommentierung meldet weiter', () => {
+  assert.deepEqual(phpunitRules([], ['            <!--', '            -->']), ['protected.changed'])
+})
+
 test('phpunit.xml: ein Attribut am Wurzelelement meldet weiter', () => {
   assert.deepEqual(
     phpunitRules(['         failOnWarning="false"'], ['         failOnWarning="true"']),

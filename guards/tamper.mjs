@@ -156,8 +156,9 @@ export const SOURCE_FILE = /\.(php|[cm]?[jt]sx?|vue|svelte|py)$/i
  * sperrt, hält die Arbeit auf. Gesperrt bleiben reine Linter-, Typchecker-
  * und Formatter-Konfigurationen.
  *
- * `harmless` beschreibt Zeilen, die das Gate nicht verschieben. Besteht die
- * Änderung nur aus solchen Zeilen, ist sie kein Fund.
+ * `harmless` beschreibt Elemente, die das Gate nicht verschieben. Das Muster
+ * braucht das Flag `g`. Bleibt nach dem Entfernen aller Treffer nur Leerraum,
+ * ist die Änderung kein Fund. Siehe `onlyHarmlessLines`.
  *
  * `tightenOnly` markiert quality.yml: eine Änderung, die das Gate nur schärft,
  * ist kein Fund, im Tamper-Check wie im Hook. Siehe `configLoosenings`.
@@ -207,8 +208,9 @@ export const PROTECTED_PATHS = [
     reportOnly: true,
     // Umgebungswerte für den Testlauf: <env>, <server>, <ini>, <const> und
     // Kommentare. Sie wählen keinen Test ab. In rankscan kam so eine Zeile in
-    // drei von rund 180 Merges dazu (Probelauf vom 14.11.2026).
-    harmless: /^\s*(<(env|server|ini|const)\s[^<>]*\/>|<!--.*-->)\s*$/,
+    // drei von rund 180 Merges dazu (Probelauf vom 14.11.2026). Beide dürfen
+    // über mehrere Zeilen gehen: [^<>] und [\s\S] schliessen Umbrüche ein.
+    harmless: /<!--[\s\S]*?-->|<(env|server|ini|const)\s[^<>]*\/>/g,
   },
   { pattern: /(^|\/)pytest\.ini$/, label: 'pytest-Konfiguration', reportOnly: true },
   // pytest, mypy und flake8 lesen auch diese Dateien. Sie tragen daneben
@@ -1187,19 +1189,44 @@ function pairComponents(old, now) {
 }
 
 /**
- * Besteht die Änderung nur aus Zeilen, die auf `harmless` passen?
+ * Besteht die Änderung nur aus Elementen, die auf `harmless` passen?
  * Leerzeilen zählen nicht. Eine Änderung ohne Zeilen ist nicht harmlos: dann
  * hat sich etwas anderes geändert, etwa der Dateimodus.
  *
+ * Hinzugefügte Zeilen prüft die Funktion in Läufen aufeinanderfolgender
+ * Nummern. So darf ein Kommentar oder ein Element über mehrere Zeilen gehen.
+ * Ein Lauf endet an jeder unveränderten Zeile. Das ist Absicht: legt jemand
+ * ein neues `<!--` und ein neues `-->` um ein bestehendes `<directory>`,
+ * bleibt in jedem Lauf ein offener Marker übrig, und die Regel meldet.
+ *
+ * Entfernte Zeilen haben keine Nummer. Darum prüft die Funktion sie einzeln.
+ * Entfernt jemand `<!--` und `-->` um ein bestehendes `<exclude>`, wird das
+ * `<exclude>` aktiv. Ohne Nummern lässt sich nicht belegen, dass zwei
+ * entfernte Zeilen zusammen einen Kommentar bildeten.
+ *
+ * Nicht abgedeckt: ein neuer Kommentar mitten in einem bestehenden. Sein `-->`
+ * beendet den äusseren Kommentar vorzeitig. Das bleibt ohne Folgen: libxml
+ * lehnt `--` in einem Kommentar als fatalen Fehler ab, PHPUnit lädt die Datei
+ * nicht, und der Testlauf bricht ab (geprüft mit DOMDocument, 21.11.2026).
+ *
  * @param {DiffFile} file
- * @param {RegExp} harmless
+ * @param {RegExp} harmless Muster mit Flag `g`
  * @returns {boolean}
  */
 function onlyHarmlessLines(file, harmless) {
-  const lines = [...file.added, ...(file.removed ?? [])]
-    .map((entry) => entry.text)
-    .filter((text) => text.trim() !== '')
-  return lines.length > 0 && lines.every((text) => harmless.test(text))
+  /** @type {string[][]} */
+  const runs = []
+  let previous = Number.NaN
+  for (const { line, text } of file.added) {
+    if (line === previous + 1) runs.at(-1)?.push(text)
+    else runs.push([text])
+    previous = line
+  }
+  const blocks = [
+    ...runs.map((run) => run.join('\n')),
+    ...(file.removed ?? []).map((entry) => entry.text),
+  ].filter((text) => text.trim() !== '')
+  return blocks.length > 0 && blocks.every((text) => text.replace(harmless, '').trim() === '')
 }
 
 /**
