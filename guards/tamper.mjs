@@ -1204,6 +1204,11 @@ function pairComponents(old, now) {
  * `<exclude>` aktiv. Ohne Nummern lässt sich nicht belegen, dass zwei
  * entfernte Zeilen zusammen einen Kommentar bildeten.
  *
+ * Nicht abgedeckt: ein neuer Kommentar mitten in einem bestehenden. Sein `-->`
+ * beendet den äusseren Kommentar vorzeitig. Das bleibt ohne Folgen: libxml
+ * lehnt `--` in einem Kommentar als fatalen Fehler ab, PHPUnit lädt die Datei
+ * nicht, und der Testlauf bricht ab (geprüft mit DOMDocument, 21.11.2026).
+ *
  * @param {DiffFile} file
  * @param {RegExp} harmless Muster mit Flag `g`
  * @returns {boolean}
