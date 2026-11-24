@@ -931,9 +931,11 @@ quality deploy-check origin/main  # ein anderer Ref
 quality deploy-check --wait 900   # auf laufende Checks warten, höchstens 15 Minuten
 ```
 
-- **Welche Checks zählen**, sagt die Branch Protection des Standardbranches.
-  Eine zweite Liste im Projekt gibt es nicht. Bindet die Protection einen Check
-  an eine App, zählt nur ein Lauf dieser App.
+- **Welche Checks zählen**, sagen Branch Protection und Rulesets des
+  Standardbranches. Bindet die Protection einen Check an eine App, zählt nur
+  ein Lauf dieser App.
+- **Ohne Branch Protection** gilt die Ersatzliste aus `quality.yml` (siehe
+  unten). Das betrifft private Repos im GitHub-Plan «free».
 - **Nur `success` ist grün.** `skipped` und `neutral` zählen nicht: ein
   übersprungenes Gate hat nichts geprüft. Nach einem Re-Run zählt der jüngste Lauf.
 - **Exit-Codes:** `0` grün, `1` blockiert (rot, läuft, fehlt), `2` keine Aussage
@@ -943,6 +945,30 @@ quality deploy-check --wait 900   # auf laufende Checks warten, höchstens 15 Mi
 - **Auf stdout** steht genau eine Zeile, etwa
   `deploy-check: grün <sha> quality,tests`. Ein Deploy-Skript übernimmt sie ins
   Log oder in eine Tag-Nachricht.
+
+### Ersatzliste in `quality.yml`
+
+Private Repos im GitHub-Plan «free» haben weder Branch Protection noch
+Rulesets. Die API antwortet auf Rulesets mit HTTP 403 «Upgrade to GitHub Pro».
+Für diesen Fall führt das Projekt die Pflicht-Checks selbst:
+
+```yaml
+deploy:
+  required_checks: [quality, audit]
+```
+
+- **Die Liste gilt nur, wenn GitHub keine Pflicht-Checks liefert.** Liefert
+  die API welche, gelten nur diese.
+- **Die Liste kommt aus dem Ziel-Commit**, nicht aus dem Arbeitsbaum. Eine
+  lokale Änderung umgeht das Gate nicht.
+- **`quality` zählt immer mit**, auch wenn die Liste ihn nicht nennt. In diesem
+  Job läuft der Tamper-Check. Der Job darf darum nicht anders heissen.
+- **Nur Läufe von GitHub Actions zählen.** Einen Commit-Status gleichen Namens
+  kann jeder mit Schreibrecht setzen.
+- **Einen Check streichen ist eine Lockerung.** Der Tamper-Check meldet es,
+  und der Commit braucht `Quality-Exception(protected.changed): <Grund>`.
+  Einen Check ergänzen schärft und braucht nichts.
+- **Fehlt die Liste oder ist sie ungültig,** endet `deploy-check` mit Exit `2`.
 
 Für den Notfall gibt es einen Override, nur mit Begründung:
 

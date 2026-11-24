@@ -20,6 +20,12 @@ baseline: false
 #   - path: tools/browsershot
 #     reason: Nur package.json für das Prod-Image, kein Code.
 
+# Optional: Pflicht-Checks für "quality deploy-check", wenn GitHub keine
+# liefert (private Repos im Plan «free»). Gilt aus dem ausgelieferten Commit.
+# "quality" zählt immer mit. Einen Eintrag streichen braucht einen Trailer.
+# deploy:
+#   required_checks: [quality, audit]
+
 # required: Schritte, die die Komponente zusagt. Fehlt einer davon, etwa weil
 # das Werkzeug fehlt, ist das Gate rot. Ohne das Feld bleibt ein Skip grün.
 # Erlaubt sind nur Schritte, die der Stack kennt (siehe README).
