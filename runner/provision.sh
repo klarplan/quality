@@ -10,6 +10,7 @@
 #   - PHP 8.3, 8.4 und 8.5 CLI mit den Extensions der Quality-Workflows
 #   - composer, git, curl, jq, unzip
 #   - User "runner" (kein sudo, Mitglied der docker-Gruppe)
+#   - SSH nur mit Key (kein Passwort-Login)
 #
 # Node fehlt absichtlich: actions/setup-node installiert es je Lauf in den
 # Runner-Tool-Cache und respektiert .nvmrc.
@@ -191,6 +192,26 @@ cat >/etc/systemd/journald.conf.d/50-groesse.conf <<'EOF'
 SystemMaxUse=500M
 EOF
 systemctl restart systemd-journald
+
+echo "==> SSH nur mit Key"
+# In /etc/ssh/sshd_config ist "#PasswordAuthentication yes" auskommentiert,
+# und sshd_config.d ist leer. Dann gilt der OpenSSH-Standard yes. Am
+# 24.11.2026 meldete "sshd -T" auf der Runner-VM darum passwordauthentication
+# yes. Ein Passwort hatte kein Konto, die Lücke war aber offen.
+# 00- vor dem Namen: sshd nimmt den ersten Wert, den es liest.
+# Reload statt Restart, und nur nach "sshd -t": Eine kaputte Konfiguration
+# sperrt sonst den Zugang. Den Test dazu enthält lib/runner-sshd.test.mjs.
+install -d /etc/ssh/sshd_config.d
+cat >/etc/ssh/sshd_config.d/00-hardening.conf <<'EOF'
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+EOF
+if ! sshd -t; then
+  rm -f /etc/ssh/sshd_config.d/00-hardening.conf
+  echo "sshd -t meldet einen Fehler. 00-hardening.conf ist wieder entfernt." >&2
+  exit 1
+fi
+systemctl reload ssh
 
 echo "==> unattended-upgrades: noble-updates und nächtlicher Neustart"
 # Die Ubuntu-Vorgabe installiert nur das Release- und das Security-Pocket
