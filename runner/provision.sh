@@ -38,13 +38,23 @@ apt-get update -qq
 # mautic-Workflow ruft es direkt auf und scheitert sonst am fehlenden Befehl.
 apt-get install -y -qq git curl jq unzip ca-certificates software-properties-common shellcheck
 
+echo "==> Ubuntu-Codename"
+# Die Repo-Zeilen für Docker und PGDG brauchen den Codename (z. B. noble).
+# sed statt source: shellcheck kann os-release nicht folgen (SC1091).
+# Die os-release-Spezifikation erlaubt Anführungszeichen um den Wert, darum tr.
+CODENAME=$(sed -n 's/^VERSION_CODENAME=//p' /etc/os-release | tr -d "\"'")
+if [[ -z $CODENAME ]]; then
+  echo "VERSION_CODENAME fehlt in /etc/os-release" >&2
+  exit 1
+fi
+
 echo "==> Docker"
 if ! command -v docker >/dev/null; then
   install -m 0755 -d /etc/apt/keyrings
   curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
   chmod a+r /etc/apt/keyrings/docker.asc
   echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] \
-https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
+https://download.docker.com/linux/ubuntu ${CODENAME} stable" \
     >/etc/apt/sources.list.d/docker.list
   apt-get update -qq
   apt-get install -y -qq docker-ce docker-ce-cli containerd.io docker-compose-plugin
@@ -78,7 +88,7 @@ if ! command -v psql >/dev/null; then
   curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
     https://www.postgresql.org/media/keys/ACCC4CF8.asc
   echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] \
-https://apt.postgresql.org/pub/repos/apt $(. /etc/os-release && echo "$VERSION_CODENAME")-pgdg main" \
+https://apt.postgresql.org/pub/repos/apt ${CODENAME}-pgdg main" \
     >/etc/apt/sources.list.d/pgdg.list
   apt-get update -qq
 fi
