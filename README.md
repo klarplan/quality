@@ -38,14 +38,14 @@ an.
 JS/TS-Projekt:
 
 ```bash
-npm  install -D github:klarplan/quality#v0.2.37 prettier
-pnpm add     -D github:klarplan/quality#v0.2.37 prettier
+npm  install -D github:klarplan/quality#v0.2.38 prettier
+pnpm add     -D github:klarplan/quality#v0.2.38 prettier
 ```
 
 Python-Projekt — über npm, mit einer `package.json`, die nur dafür da ist:
 
 ```bash
-npm install -D github:klarplan/quality#v0.2.37
+npm install -D github:klarplan/quality#v0.2.38
 pip  install ruff mypy pytest pip-audit
 ```
 
