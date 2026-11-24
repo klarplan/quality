@@ -364,3 +364,32 @@ test('components: zwei Schreibweisen desselben path sind mehrdeutig, fail closed
   const two = `${APP}  - { path: app/, stack: laravel, required: [fmt] }\n`
   assert.match(configLoosenings(two, two).join('\n'), /mehrdeutig/)
 })
+
+/* ── deploy.required_checks: die Ersatzliste für deploy-check ────────── */
+
+const DEPLOY = `${BASE}deploy:\n  required_checks: [quality, audit]\n`
+
+test('deploy.required_checks neu anlegen oder ergänzen schärft', () => {
+  assert.deepEqual(configLoosenings(BASE, DEPLOY), [])
+  const more = DEPLOY.replace('[quality, audit]', '[quality, audit, tests]')
+  assert.deepEqual(configLoosenings(DEPLOY, more), [])
+})
+
+test('einen Eintrag aus deploy.required_checks streichen lockert', () => {
+  const after = DEPLOY.replace('[quality, audit]', '[quality]')
+  assert.match(
+    configLoosenings(DEPLOY, after).join('\n'),
+    /deploy\.required_checks: audit entfernt/,
+  )
+})
+
+test('den deploy-Block entfernen lockert', () => {
+  const result = configLoosenings(DEPLOY, BASE).join('\n')
+  assert.match(result, /quality entfernt/)
+  assert.match(result, /audit entfernt/)
+})
+
+test('ein unbekannter Schlüssel unter deploy lockert', () => {
+  const after = `${DEPLOY}  skip: true\n`
+  assert.match(configLoosenings(DEPLOY, after).join('\n'), /deploy\.skip/)
+})

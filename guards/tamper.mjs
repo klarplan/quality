@@ -933,7 +933,16 @@ export function baselineOnlyShrinks(file) {
 }
 
 /** Schlüssel, die validateConfig liest. Alle anderen vergleicht der Check roh. */
-const CONFIG_KEYS = ['version', 'level', 'baseline', 'components', 'configs', 'exclude', 'tamper']
+const CONFIG_KEYS = [
+  'version',
+  'level',
+  'baseline',
+  'components',
+  'configs',
+  'exclude',
+  'tamper',
+  'deploy',
+]
 const TAMPER_KEYS = ['ignore']
 const COMPONENT_KEYS = ['path', 'stack', 'php', 'phpstan_level', 'required', 'test_command']
 
@@ -1028,6 +1037,14 @@ export function configLoosenings(before, after) {
   }
   for (const path of now.tamperIgnore) {
     if (!old.tamperIgnore.includes(path)) found.push(`tamper.ignore: neuer Pfad ${path}`)
+  }
+  // Die Ersatzliste von deploy-check: ein gestrichener Check muss nicht mehr
+  // grün sein. Ein unbekannter Unterschlüssel scheitert schon in
+  // validateConfig und zählt oben als «nicht lesbar».
+  for (const check of old.deploy.requiredChecks) {
+    if (!now.deploy.requiredChecks.includes(check)) {
+      found.push(`deploy.required_checks: ${check} entfernt`)
+    }
   }
 
   found.push(...unknownKeyChanges(rawOld, rawNow, CONFIG_KEYS, ''))

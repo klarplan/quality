@@ -139,8 +139,9 @@ async function runPruneCommand(/** @type {Options} */ options) {
 }
 
 /**
- * `quality deploy-check` — braucht keine quality.yml: Was grün sein muss,
- * sagt die Branch Protection, nicht die Konfiguration.
+ * `quality deploy-check` — lädt keine quality.yml aus dem Arbeitsbaum: Was
+ * grün sein muss, sagt die Branch Protection. Fehlt sie, liest deploy-check
+ * die Ersatzliste aus dem Ziel-Commit selbst.
  *
  * @param {Options} options
  */
