@@ -7,7 +7,8 @@
 # Nach .github/workflows/quality.yml im Projekt kopieren und die Pfade anpassen.
 #
 # Der Job läuft auf dem geteilten self-hosted Runner, ausser in einem PR, den
-# ein Bot eröffnet hat. Einzelheiten in docs/self-hosted-runner.md.
+# ein Bot eröffnet hat. Die Betriebsdoku zum Runner liegt nicht in diesem
+# öffentlichen Repo.
 
 name: Quality
 

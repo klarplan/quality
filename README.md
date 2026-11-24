@@ -826,10 +826,10 @@ beim Wechsel gehört es entfernt.
 
 Die Vorlagen laufen unverändert auf einem self-hosted Runner — nur `runs-on`
 ändert sich auf `[self-hosted, linux]`. Das kostet null Actions-Minuten, auch
-in privaten Repos. Einrichtung der Runner-VM, Registrierung je Repository und
-die Grenzen (nur private Repos, Ausfall heisst hängend statt rot) stehen in
-[`docs/self-hosted-runner.md`](docs/self-hosted-runner.md); die Skripte liegen
-unter [`runner/`](runner/).
+in privaten Repos. Die Grenzen: nur private Repos, und ein Ausfall heisst
+hängend statt rot. Die Skripte zum Einrichten liegen unter
+[`runner/`](runner/). Die Betriebsdoku der Runner-VM liegt nicht in diesem
+öffentlichen Repo.
 
 ## Board-Gate: `quality gate`
 

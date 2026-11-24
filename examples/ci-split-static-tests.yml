@@ -13,7 +13,8 @@
 # Dienste und Testbefehle anpassen.
 #
 # Die Jobs laufen auf dem geteilten self-hosted Runner, ausser in einem PR,
-# den ein Bot eröffnet hat. Einzelheiten in docs/self-hosted-runner.md.
+# den ein Bot eröffnet hat. Die Betriebsdoku zum Runner liegt nicht in diesem
+# öffentlichen Repo.
 
 name: Quality
 

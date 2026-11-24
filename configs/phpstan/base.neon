@@ -59,7 +59,7 @@ parameters:
     #
     # In beiden Fällen bleibt tmpDir aus der Projektkonfiguration draussen. Wer
     # von ubuntu-latest auf self-hosted wechselt und ein tmpDir gesetzt hat,
-    # entfernt es dabei — siehe docs/self-hosted-runner.md.
+    # entfernt es dabei. Sonst bleibt der Cache des Runners kalt.
 
     excludePaths:
         analyseAndScan:
