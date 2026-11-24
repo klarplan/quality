@@ -3,7 +3,7 @@
   "description": "Werkzeuge der Standout GmbH für Claude Code.",
   "owner": {
     "name": "Standout GmbH",
-    "email": "rene.haefliger@standout.ch"
+    "email": "mail@klarplan.ch"
   },
   "plugins": [
     {

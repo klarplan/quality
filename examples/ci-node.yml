@@ -72,7 +72,7 @@ jobs:
             exit 0
           fi
           REF=$(git show "$BASE:$LOCKFILE" 2>/dev/null \
-            | grep -oE 'renestandout/quality[^"]*[#/][0-9a-f]{40}' \
+            | grep -oE '(renestandout|klarplan)/quality[^"]*[#/][0-9a-f]{40}' \
             | grep -oE '[0-9a-f]{40}$' | head -n 1 || true)
           if [ -z "$REF" ]; then
             echo "::error::Keine quality-Version in $LOCKFILE der Basis gefunden."
