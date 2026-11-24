@@ -9,7 +9,7 @@
 #   - Docker (für services:-Container wie postgres/redis)
 #   - PHP 8.3, 8.4 und 8.5 CLI mit den Extensions der Quality-Workflows
 #   - composer, git, curl, jq, unzip
-#   - User "runner" (kein sudo, Mitglied der docker-Gruppe)
+#   - User "runner" (sudo ohne Passwort, Mitglied der docker-Gruppe)
 #   - SSH nur mit Key (kein Passwort-Login)
 #
 # Node fehlt absichtlich: actions/setup-node installiert es je Lauf in den
