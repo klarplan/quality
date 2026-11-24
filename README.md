@@ -11,10 +11,18 @@ enthält: idealerweise eine `quality.yml` mit fünf bis zehn Zeilen.
 PHP-Projekt (ohne Packagist, direkt aus Git):
 
 ```bash
-composer config repositories.quality vcs https://github.com/klarplan/quality
+composer config repositories.quality git https://github.com/klarplan/quality.git
 composer require --dev standout/quality
 composer require --dev larastan/larastan laravel/pint   # Werkzeuge des laravel-Stacks
 ```
+
+Nimm den Typ `git`, nicht `vcs`. Mit `git` klont composer das Repo über
+HTTPS und fragt die GitHub-API nie ab. Mit `vcs` fragt composer
+`api.github.com` ab. Ohne Token erlaubt die API nur 60 Anfragen pro Stunde je
+IP, und alle ddev-Container teilen sich diese IP. Ist das Limit erreicht,
+weicht composer auf einen SSH-Klon aus. Im Container fehlt der Schlüssel, und
+`composer update` bricht mit `git@github.com: Permission denied (publickey)`
+ab.
 
 Pint und PHPStan laufen im ddev-Container, wenn das Projekt eine
 `.ddev/config.yaml` hat und ddev läuft. Sonst laufen sie auf dem Host. Fehlt
