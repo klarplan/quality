@@ -11,7 +11,7 @@ enthält: idealerweise eine `quality.yml` mit fünf bis zehn Zeilen.
 PHP-Projekt (ohne Packagist, direkt aus Git):
 
 ```bash
-composer config repositories.quality vcs https://github.com/renestandout/quality
+composer config repositories.quality vcs https://github.com/klarplan/quality
 composer require --dev standout/quality
 composer require --dev larastan/larastan laravel/pint   # Werkzeuge des laravel-Stacks
 ```
@@ -38,14 +38,14 @@ an.
 JS/TS-Projekt:
 
 ```bash
-npm  install -D github:renestandout/quality#v0.2.37 prettier
-pnpm add     -D github:renestandout/quality#v0.2.37 prettier
+npm  install -D github:klarplan/quality#v0.2.37 prettier
+pnpm add     -D github:klarplan/quality#v0.2.37 prettier
 ```
 
 Python-Projekt — über npm, mit einer `package.json`, die nur dafür da ist:
 
 ```bash
-npm install -D github:renestandout/quality#v0.2.37
+npm install -D github:klarplan/quality#v0.2.37
 pip  install ruff mypy pytest pip-audit
 ```
 
@@ -736,7 +736,7 @@ Dasselbe Repo ist ein Claude-Code-Plugin. Es installiert drei Hooks und einen
 Skill, der den Arbeitsablauf und die Grenzen beschreibt.
 
 ```
-/plugin marketplace add renestandout/quality
+/plugin marketplace add klarplan/quality
 /plugin install quality@standout
 ```
 

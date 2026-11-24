@@ -6,8 +6,8 @@
     "name": "Standout GmbH",
     "email": "mail@klarplan.ch"
   },
-  "homepage": "https://github.com/renestandout/quality",
-  "repository": "https://github.com/renestandout/quality",
+  "homepage": "https://github.com/klarplan/quality",
+  "repository": "https://github.com/klarplan/quality",
   "license": "UNLICENSED",
   "keywords": ["quality", "linting", "static-analysis", "guardrails"]
 }

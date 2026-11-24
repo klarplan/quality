@@ -163,7 +163,7 @@ jobs:
             echo "::error::Keine quality-Version in $LOCKFILE der Basis gefunden."
             exit 1
           fi
-          git clone --quiet --filter=blob:none https://github.com/renestandout/quality "$RUNNER_TEMP/quality-base"
+          git clone --quiet --filter=blob:none https://github.com/klarplan/quality "$RUNNER_TEMP/quality-base"
           git -C "$RUNNER_TEMP/quality-base" checkout --quiet "$REF"
           node "$RUNNER_TEMP/quality-base/bin/quality" tamper --base "$BASE"
 
