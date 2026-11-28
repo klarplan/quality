@@ -19,7 +19,7 @@ set -euo pipefail
 # Runner sich selbst aktualisieren. Am 03.10.2026 scheiterte 2.328.0 an der
 # Mindestversion 2.329.0. Vor einer Registrierung die neueste Version prüfen:
 #   gh api repos/actions/runner/releases/latest -q .tag_name
-RUNNER_VERSION="2.337.0"
+RUNNER_VERSION="2.338.2"
 
 if [[ $EUID -ne 0 ]]; then
   echo "Mit sudo ausführen." >&2
